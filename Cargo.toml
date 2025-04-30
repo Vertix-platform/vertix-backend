@@ -1,0 +1,16 @@
+[package]
+name = "vertix-backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.6.20"          # Web framework
+tokio = { version = "1.35.1", features = ["full"] } # Async runtime
+serde = { version = "1.0.195", features = ["derive"] } # JSON serialization
+reqwest = { version = "0.11.23", features = ["json"] } # HTTP client
+dotenvy = "0.15.7"       # Environment variables
+tracing = "0.1.40"       # Logging
+tracing-subscriber = "0.3.18" # Logging subscriber
+
+[dev-dependencies]
+tower-http = { version = "0.4.4", features = ["cors"] } # CORS for testing
