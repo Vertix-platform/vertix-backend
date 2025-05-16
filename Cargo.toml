@@ -4,13 +4,27 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.6.20"          # Web framework
+axum = "0.8.4"          # Web framework
 tokio = { version = "1.35.1", features = ["full"] } # Async runtime
+tower ={ version = "0.4.13", features = ["full"] }
 serde = { version = "1.0.195", features = ["derive"] } # JSON serialization
 reqwest = { version = "0.11.23", features = ["json"] } # HTTP client
 dotenvy = "0.15.7"       # Environment variables
 tracing = "0.1.40"       # Logging
 tracing-subscriber = "0.3.18" # Logging subscriber
-
-[dev-dependencies]
-tower-http = { version = "0.4.4", features = ["cors"] } # CORS for testing
+tower-http = {version = "0.6.1", features = ["full"] } # HTTP middleware
+sqlx = { version = "0.7.3", features = ["runtime-tokio", "postgres", "uuid", "runtime-tokio-native-tls", "chrono"] }
+bcrypt = "0.15.0" # Password hashing
+jsonwebtoken = "9.2.0" # JWT generation
+oauth2 = "4.4.2" # OAuth 2.0 for Google
+serde_json = "1.0.111" # JSON handling
+uuid = { version = "1.7.0", features = ["v4", "serde"] }
+chrono = { version = "0.4.31", features = ["serde"] } # Timestamps
+dotenv = "0.15.0"
+ethers-core = "2.0.10"
+ethers = {version = "2.0.14", features = ["legacy", "abigen"] }
+hex = "0.4.3"
+redis = "0.21"
+dns-lookup = "1.0"
+argon2 = "0.5.3"
+thiserror = "2.0.12"

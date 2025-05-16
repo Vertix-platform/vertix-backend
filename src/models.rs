@@ -1,34 +1,85 @@
 use serde::{Deserialize, Serialize};
+use sqlx::types::chrono::{DateTime, Utc};
+use uuid::Uuid;
 
-// Input for /verify
-#[derive(Deserialize)]
-pub struct VerifyRequest {
-    pub asset_type: String, // e.g., "social_media", "domain"
-    pub asset_id: String,   // e.g., "123" (X user ID), "example.com"
-    pub proof: String,      // Proof of ownership (e.g., token)
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct User {
+    pub id: Uuid,
+    pub email: String,
+    #[serde(skip_serializing)]
+    pub password_hash: Option<String>,
+    #[serde(skip_serializing)]
+    #[allow(dead_code)]
+    pub google_id: Option<String>,
+    pub first_name: String,
+    pub last_name: String,
+    pub username: Option<String>,
+    pub wallet_address: Option<String>,
+    pub is_verified: bool,
+    pub created_at: DateTime<Utc>,
 }
 
-// Output for /verify
-#[derive(Serialize)]
-pub struct VerifyResponse {
-    pub is_verified: bool,  // true if ownership is valid
+#[derive(Debug, Deserialize)]
+pub struct RegisterUser {
+    pub email: String,
+    pub password: String,
+    pub first_name: String,
+    pub last_name: String,
 }
 
-// Input for /value
-#[derive(Deserialize)]
-pub struct ValueRequest {
-    pub asset_type: String,
-    pub asset_id: String,
+#[derive(Debug, Deserialize)]
+pub struct LoginUser {
+    pub email: String,
+    pub password: String,
 }
 
-// Output for /value
-#[derive(Serialize)]
-pub struct ValueResponse {
-    pub value: u64,        // Value in USD * 1,000,000
+#[derive(Debug, Serialize)]
+pub struct UserResponse {
+    pub id: Uuid,
+    pub email: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub username: Option<String>,
+    pub wallet_address: Option<String>,
+    pub is_verified: bool,
+    pub created_at: DateTime<Utc>,
 }
 
-// Error message format
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
+pub struct LoginResponse {
+    pub token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConnectWalletRequest {
+    pub wallet_address: String,
+    pub signature: String,
+    pub nonce: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateProfileRequest {
+    pub username: Option<String>,
+    pub is_verified: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ErrorResponse {
     pub error: String,
 }
+
+#[derive(Debug, Serialize)]
+pub struct NonceResponse {
+    pub nonce: String,
+}
+
+// #[derive(Debug, Deserialize)]
+// pub struct KycRequest {
+//     pub user_id: Uuid,
+// }
+
+// #[derive(Debug, Deserialize)]
+// pub struct KycCallback {
+//     pub user_id: Uuid,
+//     pub status: String, // "verified" or "rejected"
+// }
