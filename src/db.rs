@@ -197,13 +197,11 @@ pub async fn update_user_profile(
         r#"
         UPDATE users
         SET username = COALESCE($1, username),
-            is_verified = COALESCE($2, is_verified)
-        WHERE id = $3
+        WHERE id = $2
         RETURNING id, email, password_hash, google_id, first_name, last_name, username, wallet_address, is_verified, created_at
         "#
     )
     .bind(request.username)
-    .bind(request.is_verified)
     .bind(user_id)
     .fetch_one(pool)
     .await?;

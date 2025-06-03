@@ -60,7 +60,6 @@ pub struct ConnectWalletRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateProfileRequest {
     pub username: Option<String>,
-    pub is_verified: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
