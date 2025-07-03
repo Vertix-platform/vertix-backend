@@ -1,20 +1,10 @@
-use axum::{Router, routing::get};
 use dotenvy::dotenv;
 use std::net::SocketAddr;
-use tower_http::cors::{CorsLayer, Any};
-use tower_http::trace::TraceLayer;
 use tracing::{info, error};
 use tracing_subscriber;
 
-mod models;
-mod routes;
-mod db;
-mod auth;
-mod middleware;
-
-async fn health_check() -> &'static str {
-    "OK"
-}
+use vertix_backend::infrastructure::db::postgres::init_pool;
+use vertix_backend::handlers::routes::{AppState, create_router};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,17 +17,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // Initialize database pool
-    let pool = db::init_pool().await.map_err(|e| {
+    let pool = init_pool().await.map_err(|e| {
         error!("Failed to initialize database pool: {}", e);
         e
     })?;
 
-    // Build the router
-    let app = Router::new()
-        .merge(routes::app_router(pool))
-        .route("/health", get(health_check))
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any))
-        .layer(TraceLayer::new_for_http());
+    // Create app state and router
+    let state = AppState { pool };
+    let app = create_router(state);
 
     // Load server address from environment
     let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
