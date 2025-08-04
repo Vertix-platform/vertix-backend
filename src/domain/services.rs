@@ -43,6 +43,46 @@ pub enum ServiceError {
     InvalidWalletAddress,
 }
 
+// ============ CONTRACT ERROR TYPES ============
+
+#[derive(Debug, thiserror::Error)]
+pub enum ContractError {
+    #[error("RPC error: {0}")]
+    RpcError(String),
+    #[error("Invalid signature: {reason}")]
+    InvalidSignature { reason: String },
+    #[error("Contract call error: {0}")]
+    ContractCallError(String),
+    #[error("Transaction error: {0}")]
+    TransactionError(String),
+    #[error("Invalid address: {0}")]
+    InvalidAddress(String),
+    #[error("Invalid uint96 value: {reason}")]
+    InvalidUint96Value { reason: String },
+    #[error("Escrow error: {reason}")]
+    EscrowError { reason: String },
+    #[error("Invalid royalty value")]
+    InvalidRoyaltyValue,
+    #[error("Wallet mismatch: provided {provided}, connected {connected}")]
+    WalletMismatch { provided: String, connected: String },
+    #[error("Insufficient balance: current {current}, required {required}")]
+    InsufficientBalance { current: String, required: String },
+    #[error("User not verified: {user_id} - {reason}")]
+    UserNotVerified { user_id: String, reason: String },
+    #[error("User wallet not connected: {user_id} - {reason}")]
+    UserWalletNotConnected { user_id: String, reason: String },
+    #[error("User wallet mismatch: {user_id} - provided {provided}, connected {connected}")]
+    UserWalletMismatch { user_id: String, provided: String, connected: String },
+    #[error("ABI error: {0}")]
+    AbiError(String),
+}
+
+impl From<ethers::contract::AbiError> for ContractError {
+    fn from(err: ethers::contract::AbiError) -> Self {
+        ContractError::AbiError(err.to_string())
+    }
+}
+
 pub struct AuthService {
     user_repo: UserRepository,
 }

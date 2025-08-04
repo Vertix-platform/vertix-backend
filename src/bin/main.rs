@@ -4,7 +4,7 @@ use tracing::{info, error};
 use tracing_subscriber;
 
 use vertix_backend::infrastructure::db::postgres::init_pool;
-use vertix_backend::handlers::routes::{AppState, create_router};
+use vertix_backend::handlers::routes::create_router;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -22,9 +22,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         e
     })?;
 
-    // Create app state and router
-    let state = AppState { pool };
-    let app = create_router(state);
+    // Create router
+    let app = create_router(pool).await;
 
     // Load server address from environment
     let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());

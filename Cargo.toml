@@ -3,6 +3,14 @@ name = "vertix-backend"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "vertix-backend"
+path = "src/bin/main.rs"
+
+[[bin]]
+name = "test_runner"
+path = "src/bin/test_runner.rs"
+
 [dependencies]
 axum = "0.8.4"          # Web framework
 tokio = { version = "1.35.1", features = ["full"] } # Async runtime

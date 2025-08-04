@@ -1,0 +1,103 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_marketplaceCoreAddress",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_marketplaceAuctionsAddress",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "stateMutability": "payable",
+    "type": "fallback"
+  },
+  {
+    "stateMutability": "payable",
+    "type": "receive"
+  },
+  {
+    "inputs": [],
+    "name": "marketplaceAuctionsAddress",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "marketplaceCoreAddress",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_newMarketplaceAuctionsAddress",
+        "type": "address"
+      }
+    ],
+    "name": "updateMarketplaceAuctionsAddress",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_newMarketplaceCoreAddress",
+        "type": "address"
+      }
+    ],
+    "name": "updateMarketplaceCoreAddress",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MP__FailedToGetOwner",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MP__FailedToGetStorageContract",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MP__InvalidAuctionsAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MP__InvalidCoreAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MP__NotAuthorized",
+    "type": "error"
+  }
+]

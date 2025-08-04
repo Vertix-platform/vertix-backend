@@ -9,10 +9,11 @@ use crate::api::v1::create_v1_router;
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
+    pub auth_service: AuthService,
 }
 
-pub fn create_router(state: AppState) -> Router {
-    let auth_service = AuthService::new(state.pool);
+pub async fn create_router(pool: PgPool) -> Router {
+    let auth_service = AuthService::new(pool.clone());
 
     Router::new()
         .nest("/v1", create_v1_router(auth_service))
