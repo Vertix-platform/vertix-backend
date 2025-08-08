@@ -397,11 +397,6 @@ mod tests {
     use crate::domain::SocialMediaPlatform;
     use crate::domain::InitiateSocialMediaNftMintRequest;
 
-    // Mock Pinata JWT for testing
-    fn get_test_pinata_jwt() -> String {
-        std::env::var("PINATA_JWT").unwrap_or_else(|_| "test_jwt".to_string())
-    }
-
     #[tokio::test]
     async fn test_signature_generation() {
         let private_key = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
