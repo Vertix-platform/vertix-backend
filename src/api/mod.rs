@@ -1,6 +1,8 @@
 pub mod v1;
 pub mod dto;
 pub mod middleware;
+pub mod validation;
+pub mod errors;
 
 // Re-export specific items to avoid naming conflicts
 pub use v1::{

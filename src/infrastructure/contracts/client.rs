@@ -1,22 +1,24 @@
 use ethers::{
-    providers::{Http, Provider},
+    providers::{Http, Provider, Middleware},
     signers::{LocalWallet, Signer},
     contract::{Contract},
-    types::{Address, U256, TransactionReceipt},
+    types::{Address, U256, TransactionReceipt, H160, H256},
 };
-use ethers::providers::Middleware;
 use std::sync::Arc;
 use crate::domain::models::{
     MintNftRequest, MintNftResponse,
     CreateEscrowRequest, CreateEscrowResponse,
     ListAssetRequest, ListAssetResponse,
     CreateCollectionRequest, CreateCollectionResponse,
-    MintNftToCollectionRequest, MintNftToCollectionResponse
+    MintNftToCollectionRequest, MintNftToCollectionResponse,
+    MintSocialMediaNftRequest, MintSocialMediaNftResponse
 };
 use crate::domain::services::ContractError;
 use crate::infrastructure::contracts::types::*;
 use crate::infrastructure::contracts::abis;
 use crate::infrastructure::contracts::utils::uint96::Uint96;
+use crate::infrastructure::contracts::utils::verification::VerificationService;
+
 
 // Main contract client for interacting with Vertix smart contracts
 #[derive(Clone)]
@@ -25,6 +27,7 @@ pub struct ContractClient {
     wallet: LocalWallet,
     network_config: NetworkConfig,
     contract_addresses: ContractAddresses,
+    verification_service: VerificationService,
 
     // Contract instances for each contract
     vertix_nft: Contract<Provider<Http>>,
@@ -33,12 +36,12 @@ pub struct ContractClient {
 }
 
 impl ContractClient {
-    // Create a new contract client
     pub async fn new(
         rpc_url: String,
         private_key: String,
         network_config: NetworkConfig,
         contract_addresses: ContractAddresses,
+        verification_service: VerificationService,
     ) -> Result<Self, ContractError> {
         // Create provider
         let provider = Provider::<Http>::try_from(&rpc_url)
@@ -68,6 +71,7 @@ impl ContractClient {
             vertix_nft,
             vertix_escrow,
             marketplace_proxy,
+            verification_service,
         })
     }
 
@@ -75,6 +79,7 @@ impl ContractClient {
 
     /// Create a new collection
     pub async fn create_collection(&self, request: CreateCollectionRequest) -> Result<CreateCollectionResponse, ContractError> {
+        let to = self.wallet.address();
         let name = request.name;
         let symbol = request.symbol;
         let image = request.image;
@@ -82,12 +87,7 @@ impl ContractClient {
 
         // convert max_supply to u16
         let max_supply_u16 = max_supply as u16;
-
         // call the createCollection function on the vertix_nft contract
-        println!("   Debug: Calling createCollection on contract: {:?}", self.contract_addresses.vertix_nft);
-
-        // First, try to call a simple view function to verify the contract is working
-        println!("   Debug: Testing contract access...");
         match self.vertix_nft.method::<_, String>("name", ()) {
             Ok(call) => {
                 match call.call().await {
@@ -99,11 +99,11 @@ impl ContractClient {
         }
 
         let call = self.vertix_nft
-            .method::<_, ()>("createCollection", (name.to_string(), symbol.to_string(), image.to_string(), max_supply_u16))?;
+            .method::<_, ()>("createCollection", (name.to_string(), symbol.to_string(), image.to_string(), max_supply_u16))
+            .map_err(|e| ContractError::ContractCallError(e.to_string()))?;
 
         // send the transaction
-        let wallet_address = self.wallet.address();
-        let call_with_sender = call.from(wallet_address);
+        let call_with_sender = call.from(to);
         let pending_tx = call_with_sender
             .send()
             .await
@@ -114,54 +114,49 @@ impl ContractClient {
             .map_err(|e| ContractError::TransactionError(e.to_string()))?
             .ok_or_else(|| ContractError::TransactionError("Transaction failed".to_string()))?;
 
-        // Check transaction status
+        // Check if transaction was successful
         if let Some(status) = receipt.status {
-            println!("   Debug: Transaction status: {}", status);
-            if status.as_u64() == 0 {
-                println!("   Debug: Collection creation transaction failed (status = 0)");
-                println!("   Debug: Transaction hash: {:?}", receipt.transaction_hash);
-                if let Some(gas_used) = receipt.gas_used {
-                    println!("   Debug: Gas used: {}", gas_used);
-                }
-                return Err(ContractError::TransactionError("Collection creation transaction reverted".to_string()));
+            if status == 0.into() {
+                return Err(ContractError::TransactionError("Transaction reverted".to_string()));
             }
-        }
-        println!("   Debug: Transaction hash: {:?}", receipt.transaction_hash);
-        if let Some(gas_used) = receipt.gas_used {
-            println!("   Debug: Gas used: {}", gas_used);
         }
 
         // extract the collection id from the receipt
         let collection_id_u256 = self.extract_collection_id_from_receipt(&receipt)?;
-        println!("   Debug: Extracted collection ID: {:?}", collection_id_u256);
 
         let collection_id = if collection_id_u256 > U256::from(u64::MAX) {
             u64::MAX
         } else {
             collection_id_u256.as_u64()
         };
-        println!("   Debug: Final collection ID: {}", collection_id);
 
         Ok(CreateCollectionResponse {
             collection_id,
-            creator: format!("{:?}", self.wallet.address()),
-            name: name.to_string(),
-            symbol: symbol.to_string(),
-            image: image.to_string(),
+            creator: Arc::from(to.to_string()),
+            name: Arc::from(name.to_string()),
+            symbol: Arc::from(symbol.to_string()),
+            image: Arc::from(image.to_string()),
             max_supply,
             current_supply: 0,
             token_ids: vec![],
-            transaction_hash: format!("{:?}", receipt.transaction_hash),
+            transaction_hash: Arc::from(format!("{:?}", receipt.transaction_hash)),
             block_number: receipt.block_number.unwrap_or_default().as_u64(),
         })
     }
 
     /// Mint a new NFT to a collection
     pub async fn mint_nft_to_collection(&self, request: MintNftToCollectionRequest) -> Result<MintNftToCollectionResponse, ContractError> {
+        let to = self.wallet.address();
         let collection_id = request.collection_id;
         let token_uri = request.token_uri;
         let metadata_hash = request.metadata_hash;
         let royalty_bps = request.royalty_bps.unwrap_or(500); // Default 5% royalty
+
+        // Validate that the collection exists before attempting to mint
+        let collection_exists = self.check_collection_exists(collection_id).await?;
+        if !collection_exists {
+            return Err(ContractError::ContractCallError(format!("Collection {} does not exist", collection_id)));
+        }
 
         // Convert royalty_bps to Uint96
         let royalty_uint96 = Uint96::from_u256(U256::from(royalty_bps))
@@ -180,12 +175,11 @@ impl ContractClient {
             array.copy_from_slice(&bytes);
             array
         };
-        
 
         // Call mintToCollection function with fixed gas limit
         let call = self.vertix_nft
             .method::<_, ()>("mintToCollection", (
-                self.wallet.address(),
+                to,
                 collection_id,
                 token_uri.to_string(),
                 metadata_hash_bytes,
@@ -206,11 +200,18 @@ impl ContractClient {
             .map_err(|e| ContractError::TransactionError(e.to_string()))?
             .ok_or_else(|| ContractError::TransactionError("Transaction failed".to_string()))?;
 
+        // Check if transaction was successful
+        if let Some(status) = receipt.status {
+            if status == 0.into() {
+                return Err(ContractError::TransactionError("Transaction reverted".to_string()));
+            }
+        }
+
         // Extract token ID from logs
         let token_id = self.extract_token_id_from_receipt(&receipt)?;
 
         Ok(MintNftToCollectionResponse {
-            to: Arc::from(self.wallet.address().to_string()),
+            to: Arc::from(to.to_string()),
             collection_id,
             token_id,
             uri: token_uri,
@@ -224,6 +225,7 @@ impl ContractClient {
 
     /// Mint a new NFT
     pub async fn mint_nft(&self, request: MintNftRequest) -> Result<MintNftResponse, ContractError> {
+        let to = self.wallet.address();
         let token_uri = request.token_uri;
         let metadata_hash = request.metadata_hash;
         let royalty_bps = request.royalty_bps.unwrap_or(500); // Default 5% royalty
@@ -249,7 +251,7 @@ impl ContractClient {
         // Call mintSingleNft function with fixed gas limit
         let call = self.vertix_nft
             .method::<_, ()>("mintSingleNft", (
-                self.wallet.address(),
+                to,
                 token_uri.to_string(),
                 metadata_hash_bytes,
                 royalty_uint96.0
@@ -269,17 +271,121 @@ impl ContractClient {
             .map_err(|e| ContractError::TransactionError(e.to_string()))?
             .ok_or_else(|| ContractError::TransactionError("Transaction failed".to_string()))?;
 
+        // Check if transaction was successful
+        if let Some(status) = receipt.status {
+            if status == 0.into() {
+                return Err(ContractError::TransactionError("Transaction reverted".to_string()));
+            }
+        }
+
         // Extract token ID from logs
         let token_id = self.extract_token_id_from_receipt(&receipt)?;
 
         Ok(MintNftResponse {
-            to: Arc::from(self.wallet.address().to_string()),
+            to: Arc::from(to.to_string()),
             token_id,
             collection_id: None,
             uri: Arc::from(token_uri.to_string()),
             metadata_hash: Arc::from(metadata_hash.to_string()),
             royalty_recipient: Arc::from(self.wallet.address().to_string()),
             royalty_bps,
+            transaction_hash: Arc::from(format!("{:?}", receipt.transaction_hash)),
+            block_number: receipt.block_number.unwrap_or_default().as_u64(),
+        })
+    }
+
+    /// Mint social media NFT with signature verification
+    pub async fn mint_social_media_nft(&self, request: MintSocialMediaNftRequest) -> Result<MintSocialMediaNftResponse, ContractError> {
+        let to: Address = self.wallet.address();
+        let social_media_id = request.social_media_id;
+        let token_uri = request.token_uri;
+        let metadata_hash = request.metadata_hash;
+        let royalty_bps = request.royalty_bps.unwrap_or(500); // Default 5% royalty
+        let signature = request.signature;
+
+        // Convert royalty_bps to U256 for ethers (which handles uint96 conversion automatically)
+        let royalty_u256 = U256::from(royalty_bps);
+
+        // Convert metadata_hash from "0x..." string to [u8; 32]
+        let metadata_hash_bytes: [u8; 32] = {
+            let bytes = hex::decode(&metadata_hash[2..]) // Remove "0x" prefix
+                .map_err(|e| ContractError::ContractCallError(format!("Invalid metadata hash: {}", e)))?;
+
+            if bytes.len() != 32 {
+                return Err(ContractError::ContractCallError("Metadata hash must be 32 bytes".into()));
+            }
+
+            let mut array = [0u8; 32];
+            array.copy_from_slice(&bytes);
+            array
+        };
+
+        // Convert signature to ethers::types::Bytes for Solidity
+        let signature_bytes = ethers::types::Bytes::from(
+            hex::decode(&signature[2..])
+                .map_err(|e| ContractError::ContractCallError(format!("Invalid signature: {}", e)))?
+        );
+
+        // Test if contract instance is working by calling a simple view function
+        match self.vertix_nft.method::<_, String>("name", ()) {
+            Ok(call) => {
+                match call.call().await {
+                    Ok(name) => println!("   Debug: Contract name: {}", name),
+                    Err(e) => println!("   Debug: Failed to get contract name: {}", e),
+                }
+            },
+            Err(e) => println!("   Debug: Failed to create name() call: {}", e),
+        }
+
+        // Call mintSocialMediaNft function with fixed gas limit
+        let call = self.vertix_nft
+            .method::<_, ()>("mintSocialMediaNft", (
+                to,
+                social_media_id.to_string(),
+                token_uri.to_string(),
+                metadata_hash_bytes,
+                royalty_u256,
+                signature_bytes
+            ))
+            .map_err(|e| ContractError::ContractCallError(e.to_string()))?;
+
+        // Send transaction with fixed gas limit
+        let call_with_gas = call.gas(500000u64); // Fixed gas limit
+        let pending_tx = call_with_gas
+            .send()
+            .await
+            .map_err(|e| {
+                println!("   Debug: Transaction send error: {:?}", e);
+                ContractError::TransactionError(e.to_string())
+            })?;
+
+        // Wait for confirmation
+        let receipt = pending_tx
+            .await
+            .map_err(|e| {
+                println!("   Debug: Transaction confirmation error: {:?}", e);
+                ContractError::TransactionError(e.to_string())
+            })?
+            .ok_or_else(|| ContractError::TransactionError("Transaction failed".to_string()))?;
+
+        // Check if transaction was successful
+        if let Some(status) = receipt.status {
+            if status == 0.into() {
+                return Err(ContractError::TransactionError("Transaction reverted".to_string()));
+            }
+        }
+
+        // Extract token ID from logs
+        let token_id = self.extract_social_media_token_id_from_receipt(&receipt)?;
+
+        Ok(MintSocialMediaNftResponse {
+            to: Arc::from(to.to_string()),
+            token_id,
+            social_media_id: Arc::from(social_media_id.to_string()),
+            uri: Arc::from(token_uri.to_string()),
+            metadata_hash: Arc::from(metadata_hash.to_string()),
+            royalty_recipient: Arc::from(self.wallet.address().to_string()),
+            royalty_bps: royalty_bps as u16,
             transaction_hash: Arc::from(format!("{:?}", receipt.transaction_hash)),
             block_number: receipt.block_number.unwrap_or_default().as_u64(),
         })
@@ -336,7 +442,7 @@ impl ContractClient {
     /// Extract collection ID from transaction receipt
     fn extract_collection_id_from_receipt(&self, receipt: &TransactionReceipt) -> Result<U256, ContractError> {        
         // Look for CollectionCreated event in the logs
-        for (i, log) in receipt.logs.iter().enumerate() {
+        for (_i, log) in receipt.logs.iter().enumerate() {
 
             if log.address == self.contract_addresses.vertix_nft {
                 // CollectionCreated event signature: CollectionCreated(uint256 indexed collectionId, address indexed creator, string name, string symbol, string image, uint256 maxSupply)
@@ -354,6 +460,65 @@ impl ContractClient {
         Ok(U256::from(0))
     }
 
+    /// Extract token ID from social media NFT transaction receipt
+    fn extract_social_media_token_id_from_receipt(&self, receipt: &TransactionReceipt) -> Result<u64, ContractError> {
+
+        // Look for SocialMediaNFTMinted event in the logs
+        for (_log_index, log) in receipt.logs.iter().enumerate() {
+
+            // Check if this log is from our NFT contract
+            if log.address == H160::from_slice(&self.contract_addresses.vertix_nft.0.as_slice()) {
+
+                // Check if this is the SocialMediaNFTMinted event by signature
+                let social_media_nft_minted_signature = H256::from_slice(&hex::decode("a070a1c2e676dbcadfab71a2357b2423de00020d93af644115c7ea4959da267c").unwrap());
+                if log.topics.len() > 0 && log.topics[0] == social_media_nft_minted_signature {
+
+                    // SocialMediaNFTMinted event signature: SocialMediaNFTMinted(address indexed to, uint256 indexed tokenId, string socialMediaId, string uri, bytes32 metadataHash, address indexed royaltyRecipient, uint96 royaltyBps)
+                    // The tokenId is the second indexed parameter (Topic 2, index 2)
+                    if log.topics.len() >= 4 {
+                        // Topic 0: Event signature
+                        // Topic 1: address indexed to
+                        // Topic 2: uint256 indexed tokenId ← This is what we want
+                        // Topic 3: address indexed royaltyRecipient
+                        if let Some(token_id_topic) = log.topics.get(2) {
+
+                            // Convert the topic to u64 safely
+                            let token_id = U256::from_big_endian(&token_id_topic.as_bytes());
+
+                            // Check if the value fits in u64
+                            if token_id > U256::from(u64::MAX) {
+                                return Ok(u64::MAX);
+                            }
+                            let token_id_u64 = token_id.try_into().unwrap_or(0);
+                            return Ok(token_id_u64);
+                        }
+                    }
+                }
+            }
+        }
+
+        // If no SocialMediaNFTMinted event found, try to extract from Transfer event (ERC721 standard)
+        for log in &receipt.logs {
+            if log.address == H160::from_slice(&self.contract_addresses.vertix_nft.0.as_slice()) {
+                // Transfer event signature: Transfer(address,address,uint256)
+                // The tokenId is the third topic (index 2)
+                if log.topics.len() >= 3 {
+                    if let Some(token_id_topic) = log.topics.get(2) {
+                        let token_id = U256::from_big_endian(&token_id_topic.as_bytes());
+                        // Check if the value fits in u64
+                        if token_id > U256::from(u64::MAX) {
+                            return Ok(u64::MAX);
+                        }
+                        return Ok(token_id.try_into().unwrap_or(0));
+                    }
+                }
+            }
+        }
+
+        // Fallback: return 0 if no token ID found
+        Ok(0)
+    }
+
     /// Get the current wallet address
     pub fn get_wallet_address(&self) -> Address {
         self.wallet.address()
@@ -362,6 +527,10 @@ impl ContractClient {
     /// Get the current network configuration
     pub fn get_network_config(&self) -> &NetworkConfig {
         &self.network_config
+    }
+
+    pub fn get_verification_service(&self) -> &VerificationService {
+        &self.verification_service
     }
 
     /// Get wallet balance

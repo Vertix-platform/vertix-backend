@@ -14,36 +14,36 @@ pub fn load_local_addresses() -> Result<ContractAddresses, ContractError> {
         return convert_json_to_addresses(addresses);
     }
 
-    // Fallback to hardcoded addresses for development
+    // Fallback to hardcoded addresses for development (Updated from latest deployment)
     Ok(ContractAddresses {
-        vertix_nft: "0x9A676e781A523b5d0C0e43731313A708CB607508"
+        vertix_nft: "0xfaAddC93baf78e89DCf37bA67943E1bE8F37Bb8c"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        vertix_governance: "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
+        vertix_governance: "0x22753E4264FDDc6181dc7cce468904A80a363E44"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        vertix_escrow: "0x610178dA211FEF7D417bC0e6FeD39F05609AD788"
+        vertix_escrow: "0xD0141E899a65C95a556fE2B27e5982A6DE7fDD7A"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_core: "0x68B1D87F95878fE05B998F19b66F4baba5De1aed"
+        marketplace_core: "0x5bf5b11053e734690269C6B9D438F8C9d48F528A"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_auctions: "0x3Aa5ebB10DC797CAC828524e59A333d0A371443c"
+        marketplace_auctions: "0xffa7CA1AEEEbBc30C874d32C7e22F052BbEa0429"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_fees: "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE"
+        marketplace_fees: "0x3155755b79aA083bd953911C92705B7aA82a18F9"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_storage: "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+        marketplace_storage: "0xc0F115A19107322cFBf1cDBC7ea011C19EbDB4F8"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_proxy: "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d"
+        marketplace_proxy: "0x3aAde2dCD2Df6a8cAc689EE797591b2913658659"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        cross_chain_bridge: "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+        cross_chain_bridge: "0x3347B4d90ebe72BeFb30444C9966B2B990aE9FcB"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        cross_chain_registry: "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6"
+        cross_chain_registry: "0xc96304e3c037f81dA488ed9dEa1D8F2a48278a75"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
     })

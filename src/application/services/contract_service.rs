@@ -6,10 +6,13 @@ use crate::domain::models::{
     CreateEscrowRequest, CreateEscrowResponse,
     ListAssetRequest, ListAssetResponse,
     CreateCollectionRequest, CreateCollectionResponse,
-    MintNftToCollectionRequest, MintNftToCollectionResponse
+    MintNftToCollectionRequest, MintNftToCollectionResponse,
+    MintSocialMediaNftRequest, MintSocialMediaNftResponse,
+    InitiateSocialMediaNftMintRequest, InitiateSocialMediaNftMintResponse
 };
 use crate::domain::services::ContractError;
 use crate::infrastructure::contracts::addresses;
+use crate::infrastructure::contracts::utils::verification::VerificationService;
 
 /// Service layer for contract operations
 /// This provides a higher-level interface that handles wallet connection and business logic
@@ -31,12 +34,16 @@ impl ContractService {
         // Get contract addresses
         let contract_addresses = addresses::get_contract_addresses_by_chain_id(chain_id)?;
 
+        // Create verification service
+        let verification_service = VerificationService::new(&private_key)?;
+
         // Create contract client
         let client = ContractClient::new(
             rpc_url,
             private_key,
             network_config.clone(),
             contract_addresses,
+            verification_service,
         ).await?;
 
         Ok(Self {
@@ -86,6 +93,37 @@ impl ContractService {
         // Call the client to mint the NFT
         let client = self.client.read().await;
         client.mint_nft(request).await
+    }
+
+    pub async fn mint_social_media_nft(&self, wallet_address: String, request: MintSocialMediaNftRequest) -> Result<MintSocialMediaNftResponse, ContractError> {
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Verify wallet has sufficient balance for gas
+        self.verify_wallet_balance().await?;
+
+        // Call the client to mint the social media NFT
+        let client = self.client.read().await;
+        client.mint_social_media_nft(request).await
+    }
+
+    /// Initiate social media NFT minting process
+    /// This method generates all necessary data including signature for the minting process
+    pub async fn initiate_social_media_nft_mint(
+        &self,
+        wallet_address: String,
+        request: InitiateSocialMediaNftMintRequest,
+    ) -> Result<InitiateSocialMediaNftMintResponse, ContractError> {
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Get wallet address for signature generation
+        let client = self.client.read().await;
+        let user_address = client.get_wallet_address();
+
+        // Use verification service to process the request and generate signature
+        let verification_service = client.get_verification_service();
+        verification_service.process_social_media_nft_mint(&user_address, &request).await
     }
 
     // AUTHENTICATED OPERATIONS
@@ -203,11 +241,11 @@ impl ContractService {
             })?;
 
         // Parse the provided wallet address
-        let provided_address = wallet_address.parse::<ethers::types::Address>()
+        let provided_address = wallet_address.parse::<alloy::primitives::Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?;
 
         // Parse the user's wallet address
-        let user_address = user_wallet.parse::<ethers::types::Address>()
+        let user_address = user_wallet.parse::<alloy::primitives::Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?;
 
         // Check if addresses match

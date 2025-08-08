@@ -16,7 +16,7 @@ axum = "0.8.4"          # Web framework
 tokio = { version = "1.35.1", features = ["full"] } # Async runtime
 tower ={ version = "0.4.13", features = ["full"] }
 serde = { version = "1.0.195", features = ["derive"] } # JSON serialization
-reqwest = { version = "0.11.23", features = ["json"] } # HTTP client
+reqwest = { version = "0.11", features = ["json", "multipart"] }
 dotenvy = "0.15.7"       # Environment variables
 tracing = "0.1.40"       # Logging
 tracing-subscriber = "0.3.18" # Logging subscriber
@@ -37,3 +37,6 @@ dns-lookup = "1.0"
 argon2 = "0.5.3"
 thiserror = "2.0.12"
 async-trait = "0.1.74"
+urlencoding = "2.1" # For URL encoding in OAuth flows
+backtrace = "0.3" # For debugging panics
+alloy = { version = "1.0.18", features = ["full"] }
