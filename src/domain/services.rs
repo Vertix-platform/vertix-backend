@@ -23,7 +23,7 @@ use crate::infrastructure::repositories::UserRepository;
 // Social Media OAuth Types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SocialMediaPlatform {
-    Twitter,
+    X,
     Instagram,
     Facebook,
 }
@@ -31,7 +31,7 @@ pub enum SocialMediaPlatform {
 impl SocialMediaPlatform {
     pub fn as_str(&self) -> &'static str {
         match self {
-            SocialMediaPlatform::Twitter => "twitter",
+            SocialMediaPlatform::X => "x",
             SocialMediaPlatform::Instagram => "instagram",
             SocialMediaPlatform::Facebook => "facebook",
         }
@@ -115,8 +115,12 @@ pub enum ContractError {
     UserWalletNotConnected { user_id: String, reason: String },
     #[error("User wallet mismatch: {user_id} - provided {provided}, connected {connected}")]
     UserWalletMismatch { user_id: String, provided: String, connected: String },
+    #[error("Not authorized: {operation}")]
+    NotAuthorized { operation: String },
     #[error("ABI error: {0}")]
     AbiError(String),
+    #[error("Database error: {0}")]
+    DatabaseError(String),
 }
 
 impl From<ethers::contract::AbiError> for ContractError {
@@ -397,7 +401,7 @@ impl AuthService {
 
     pub fn get_social_media_auth_url(platform: &SocialMediaPlatform) -> (String, CsrfToken) {
         let (client, scope) = match platform {
-            SocialMediaPlatform::Twitter => {
+            SocialMediaPlatform::X => {
                 let client = Self::twitter_oauth_client();
                 let scope = "tweet.read users.read offline.access".to_string();
                 (client, scope)
@@ -431,13 +435,13 @@ impl AuthService {
         auth_code: &str,
     ) -> Result<SocialMediaProfile, ServiceError> {
         match platform {
-            SocialMediaPlatform::Twitter => self.authenticate_twitter_user(auth_code).await,
+            SocialMediaPlatform::X => self.authenticate_x_user(auth_code).await,
             SocialMediaPlatform::Instagram => self.authenticate_instagram_user(auth_code).await,
             SocialMediaPlatform::Facebook => self.authenticate_facebook_user(auth_code).await,
         }
     }
 
-    async fn authenticate_twitter_user(&self, auth_code: &str) -> Result<SocialMediaProfile, ServiceError> {
+    async fn authenticate_x_user(&self, auth_code: &str) -> Result<SocialMediaProfile, ServiceError> {
         let client = Self::twitter_oauth_client();
         let token_response = client
             .exchange_code(oauth2::AuthorizationCode::new(auth_code.to_string()))
@@ -454,15 +458,15 @@ impl AuthService {
             .header("Authorization", format!("Bearer {}", access_token))
             .send()
             .await
-            .map_err(|e| ServiceError::OAuthError(format!("Twitter profile request failed: {}", e)))?;
+            .map_err(|e| ServiceError::OAuthError(format!("X profile request failed: {}", e)))?;
 
         let profile_data: serde_json::Value = profile_response.json().await
-            .map_err(|e| ServiceError::OAuthError(format!("Failed to parse Twitter profile response: {}", e)))?;
+            .map_err(|e| ServiceError::OAuthError(format!("Failed to parse X profile response: {}", e)))?;
 
         let user_data = &profile_data["data"];
 
         Ok(SocialMediaProfile {
-            platform: SocialMediaPlatform::Twitter,
+            platform: SocialMediaPlatform::X,
             user_id: user_data["id"].as_str().unwrap_or("").to_string(),
             username: user_data["username"].as_str().unwrap_or("").to_string(),
             display_name: user_data["name"].as_str().unwrap_or("").to_string(),
@@ -549,7 +553,7 @@ impl AuthService {
 
     pub async fn get_social_media_profile_image(&self, profile: &SocialMediaProfile) -> Result<Option<String>, ServiceError> {
         match profile.platform {
-            SocialMediaPlatform::Twitter => {
+            SocialMediaPlatform::X => {
                 // Twitter profile image is already included in the profile
                 Ok(profile.profile_image_url.clone())
             }
@@ -579,7 +583,7 @@ impl AuthService {
 
     pub async fn get_social_media_follower_count(&self, profile: &SocialMediaProfile) -> Result<Option<u64>, ServiceError> {
         match profile.platform {
-            SocialMediaPlatform::Twitter => {
+            SocialMediaPlatform::X => {
                 let client = reqwest::Client::new();
                 let response = client
                     .get(&format!(
@@ -589,10 +593,10 @@ impl AuthService {
                     .header("Authorization", format!("Bearer {}", profile.access_token))
                     .send()
                     .await
-                    .map_err(|e| ServiceError::OAuthError(format!("Twitter follower count request failed: {}", e)))?;
+                        .map_err(|e| ServiceError::OAuthError(format!("X follower count request failed: {}", e)))?;
 
                 let data: serde_json::Value = response.json().await
-                    .map_err(|e| ServiceError::OAuthError(format!("Failed to parse Twitter follower count response: {}", e)))?;
+                    .map_err(|e| ServiceError::OAuthError(format!("Failed to parse X follower count response: {}", e)))?;
 
                 let follower_count = data["data"]["public_metrics"]["followers_count"].as_u64();
                 Ok(follower_count)

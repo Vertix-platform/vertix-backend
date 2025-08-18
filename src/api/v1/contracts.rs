@@ -5,19 +5,52 @@ use axum::{
 };
 
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use crate::{
-    application::services::AuthService,
     domain::models::{
         MintNftRequest,
-        InitiateSocialMediaNftMintRequest, 
+        InitiateSocialMediaNftMintRequest,
         MintSocialMediaNftRequest,
+        ListNftRequest,
+        ListNonNftAssetRequest,
+        ListNftForAuctionRequest,
+        BuyNftRequest, BuyNonNftAssetRequest,
+        CancelNftListingRequest, CancelNonNftListingRequest,
+        ConfirmTransferRequest, RaiseDisputeRequest, RefundRequest,
     },
     domain::SocialMediaPlatform,
-    application::services::contract_service::ContractService,
-    api::validation::{Validator, Validate, ValidationResult},
+    application::services::{ContractService, ReadOnlyContractService},
+    // application::services::contract_service::ContractService,
+    api::validation::{Validator, Validate, ValidationResult, ValidationError},
     api::errors::{ApiError, ApiResult},
+    handlers::AppState,
+    api::middleware::auth::AuthenticatedUser,
 };
 use std::sync::Arc;
+
+// Helper function to create contract service with current chain configuration
+async fn create_contract_service(db_pool: PgPool) -> Result<ContractService, ApiError> {
+    let chain_config = crate::infrastructure::contracts::config::get_current_chain_config()
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+
+    ContractService::new_with_auto_private_key(
+        chain_config.rpc_url.clone(),
+        chain_config.chain_id,
+        db_pool,
+    ).await.map_err(|e| ApiError::internal_server_error(format!("Failed to create contract service: {}", e)))
+}
+
+// Helper function to create read-only contract service with current chain configuration
+async fn create_read_only_contract_service(db_pool: PgPool) -> Result<ReadOnlyContractService, ApiError> {
+    let chain_config = crate::infrastructure::contracts::config::get_current_chain_config()
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+
+    ContractService::new_read_only(
+        chain_config.rpc_url.clone(),
+        chain_config.chain_id,
+        db_pool,
+    ).await.map_err(|e| ApiError::internal_server_error(format!("Failed to create read-only contract service: {}", e)))
+}
 
 // ============ REQUEST/RESPONSE TYPES ============
 
@@ -65,12 +98,86 @@ pub struct ListNftApiRequest {
     pub nft_contract: String,
     pub token_id: u64,
     pub price: String,
+    pub description: String,
+}
+
+impl Validate for ListNftApiRequest {
+    fn validate(&self) -> ValidationResult<()> {
+        let results = vec![
+            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
+            Validator::validate_ethereum_address(&self.nft_contract, "nft_contract"),
+            Validator::validate_numeric_string(&self.price, "price"),
+            Validator::validate_string(&self.description, "description", 1, 1000),
+        ];
+
+        Validator::combine_results(results)
+    }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct BuyNftApiRequest {
     pub wallet_address: String,
     pub listing_id: u64,
+}
+
+impl Validate for BuyNftApiRequest {
+    fn validate(&self) -> ValidationResult<()> {
+        let results = vec![
+            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
+        ];
+
+        Validator::combine_results(results)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BuyNonNftAssetApiRequest {
+    pub wallet_address: String,
+    pub listing_id: u64,
+    pub price: String, // Price in wei as string
+}
+
+impl Validate for BuyNonNftAssetApiRequest {
+    fn validate(&self) -> ValidationResult<()> {
+        let results = vec![
+            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
+            Validator::validate_numeric_string(&self.price, "price"),
+        ];
+
+        Validator::combine_results(results)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CancelNftListingApiRequest {
+    pub wallet_address: String,
+    pub listing_id: u64,
+}
+
+impl Validate for CancelNftListingApiRequest {
+    fn validate(&self) -> ValidationResult<()> {
+        let results = vec![
+            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
+        ];
+
+        Validator::combine_results(results)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CancelNonNftListingApiRequest {
+    pub wallet_address: String,
+    pub listing_id: u64,
+}
+
+impl Validate for CancelNonNftListingApiRequest {
+    fn validate(&self) -> ValidationResult<()> {
+        let results = vec![
+            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
+        ];
+
+        Validator::combine_results(results)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -80,6 +187,64 @@ pub struct CreateAuctionApiRequest {
     pub duration: u64,
     pub reserve_price: String,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct ListNftForAuctionApiRequest {
+    pub wallet_address: String,
+    pub listing_id: u64,
+    pub is_nft: bool, // true for NFT, false for non-NFT
+}
+
+impl Validate for ListNftForAuctionApiRequest {
+    fn validate(&self) -> ValidationResult<()> {
+        let results = vec![
+            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
+        ];
+
+        Validator::combine_results(results)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListSocialMediaNftApiRequest {
+    pub wallet_address: String,
+    pub token_id: u64,
+    pub price: String,
+    pub social_media_id: String,
+    pub description: String,
+}
+
+impl Validate for ListSocialMediaNftApiRequest {
+    fn validate(&self) -> ValidationResult<()> {
+        let results = vec![
+            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
+            Validator::validate_numeric_string(&self.price, "price"),
+            Validator::validate_string(&self.social_media_id, "social_media_id", 1, 100),
+            Validator::validate_string(&self.description, "description", 1, 1000),
+        ];
+
+        Validator::combine_results(results)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmTransferApiRequest {
+    pub listing_id: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RaiseDisputeApiRequest {
+    pub listing_id: u64,
+}
+
+
+
+#[derive(Debug, Deserialize)]
+pub struct RefundApiRequest {
+    pub listing_id: u64,
+}
+
+
 
 #[derive(Debug, Deserialize)]
 pub struct PlaceBidApiRequest {
@@ -97,10 +262,26 @@ pub struct ListNonNftAssetApiRequest {
     pub verification_proof: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct BuyNonNftAssetApiRequest {
-    pub wallet_address: String,
-    pub listing_id: u64,
+impl Validate for ListNonNftAssetApiRequest {
+    fn validate(&self) -> ValidationResult<()> {
+        let mut results = vec![
+            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
+            Validator::validate_string(&self.asset_id, "asset_id", 1, 100),
+            Validator::validate_numeric_string(&self.price, "price"),
+            Validator::validate_string(&self.description, "description", 1, 1000),
+            Validator::validate_string(&self.verification_proof, "verification_proof", 1, 10000),
+        ];
+
+        // Validate asset_type is within valid range
+        if self.asset_type > 5 {
+            results.push(Err(ValidationError {
+                field: "asset_type".to_string(),
+                message: "Asset type must be between 1 and 5".to_string(),
+            }));
+        }
+
+        Validator::combine_results(results)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,11 +380,12 @@ impl Validate for MintSocialMediaNftApiRequest {
 
 /// Mint a new NFT
 pub async fn mint_nft(
-    State(_state): State<AuthService>,
+    State(state): State<AppState>,
     Json(request): Json<MintNftApiRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    // Validate the request
-    request.validate().map_err(ApiError::from_validation_errors)?;
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
+
     let contract_request = MintNftRequest {
         to: Arc::from(request.wallet_address.clone()),
         token_uri: Arc::from(request.token_uri),
@@ -213,13 +395,9 @@ pub async fn mint_nft(
     };
 
     // Create contract service for this request
-    let contract_service = ContractService::new(
-        std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string()),
-        std::env::var("PRIVATE_KEY").map_err(|_| ApiError::internal_server_error("PRIVATE_KEY environment variable not set"))?,
-        31337, // Default chain ID
-    ).await.map_err(|e| ApiError::internal_server_error(format!("Failed to create contract service: {}", e)))?;
+    let contract_service = create_contract_service(state.pool).await?;
 
-    let response = contract_service.mint_nft(request.wallet_address.to_string(), contract_request).await
+    let response = contract_service.mint_nft(request.wallet_address, contract_request).await
         .map_err(|e| ApiError::bad_request(format!("Failed to mint NFT: {}", e)))?;
 
     Ok(Json(serde_json::json!({
@@ -238,22 +416,33 @@ pub async fn mint_nft(
 
 /// Get network information
 pub async fn get_network_info(
-    State(_state): State<AuthService>,
+    State(_state): State<AppState>,
 ) -> ApiResult<impl IntoResponse> {
-    // Create contract service for this request
-    let contract_service = ContractService::new(
-        std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string()),
-        std::env::var("PRIVATE_KEY").map_err(|_| ApiError::internal_server_error("PRIVATE_KEY environment variable not set"))?,
-        31337, // Default chain ID
-    ).await.map_err(|e| ApiError::internal_server_error(format!("Failed to create contract service: {}", e)))?;
-
-    let network_config = contract_service.get_network_config().clone();
+    // Get current chain configuration
+    let chain_config = crate::infrastructure::contracts::config::get_current_chain_config()
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+    
     Ok(Json(serde_json::json!({
         "success": true,
         "data": {
-            "chain_id": network_config.chain_id,
-            "rpc_url": network_config.rpc_url,
-            "name": "Anvil Local"
+            "chain_id": chain_config.chain_id,
+            "chain_name": chain_config.name,
+            "chain_type": match chain_config.chain_type {
+                crate::infrastructure::contracts::types::ChainType::Polygon => "polygon",
+                crate::infrastructure::contracts::types::ChainType::Base => "base",
+            },
+            "rpc_url": chain_config.rpc_url,
+            "explorer_url": chain_config.explorer_url,
+            "native_currency": {
+                "name": chain_config.native_currency.name,
+                "symbol": chain_config.native_currency.symbol,
+                "decimals": chain_config.native_currency.decimals,
+            },
+            "gas_settings": {
+                "default_gas_limit": chain_config.gas_settings.default_gas_limit,
+                "max_gas_limit": chain_config.gas_settings.max_gas_limit,
+                "block_time_seconds": chain_config.gas_settings.block_time_seconds,
+            }
         },
         "error": null
     })))
@@ -261,14 +450,10 @@ pub async fn get_network_info(
 
 /// Check contract service connection
 pub async fn check_connection(
-    State(_state): State<AuthService>,
+    State(state): State<AppState>,
 ) -> ApiResult<impl IntoResponse> {
     // Create contract service for this request
-    let contract_service = ContractService::new(
-        std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string()),
-        std::env::var("PRIVATE_KEY").map_err(|_| ApiError::internal_server_error("PRIVATE_KEY environment variable not set"))?,
-        31337, // Default chain ID
-    ).await.map_err(|e| ApiError::internal_server_error(format!("Failed to create contract service: {}", e)))?;
+    let contract_service = create_contract_service(state.pool).await?;
 
     let is_connected = contract_service.is_connected().await;
     Ok(Json(serde_json::json!({
@@ -281,7 +466,7 @@ pub async fn check_connection(
 /// Initiate social media NFT minting process
 /// This endpoint generates all necessary data including signature for the minting process
 pub async fn initiate_social_media_nft_mint(
-    State(_state): State<AuthService>,
+    State(state): State<AppState>,
     Json(request): Json<InitiateSocialMediaNftMintApiRequest>,
 ) -> ApiResult<impl IntoResponse> {
     // Validate the request
@@ -289,10 +474,10 @@ pub async fn initiate_social_media_nft_mint(
 
     // Parse platform (validation already ensures it's valid)
     let platform = match request.platform.as_str() {
-        "twitter" => SocialMediaPlatform::Twitter,
+        "x" => SocialMediaPlatform::X,
         "instagram" => SocialMediaPlatform::Instagram,
         "facebook" => SocialMediaPlatform::Facebook,
-        _ => return Err(ApiError::bad_request("Invalid platform. Must be 'twitter', 'instagram', or 'facebook'")),
+        _ => return Err(ApiError::bad_request("Invalid platform. Must be 'x', 'instagram', or 'facebook'")),
     };
 
     let contract_request = InitiateSocialMediaNftMintRequest {
@@ -313,9 +498,10 @@ pub async fn initiate_social_media_nft_mint(
         std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string()),
         std::env::var("PRIVATE_KEY").map_err(|_| ApiError::internal_server_error("PRIVATE_KEY environment variable not set"))?,
         31337, // Default chain ID
+        state.pool,
     ).await.map_err(|e| ApiError::internal_server_error(format!("Failed to create contract service: {}", e)))?;
 
-    let response = contract_service.initiate_social_media_nft_mint(request.wallet_address, contract_request).await
+    let response = contract_service.initiate_social_media_nft_mint(request.wallet_address.to_string(), contract_request).await
         .map_err(|e| ApiError::bad_request(format!("Failed to initiate social media NFT mint: {}", e)))?;
 
     Ok(Json(serde_json::json!({
@@ -333,13 +519,12 @@ pub async fn initiate_social_media_nft_mint(
 
 /// Mint social media NFT with signature verification
 pub async fn mint_social_media_nft(
-    State(_state): State<AuthService>,
+    State(state): State<AppState>,
     Json(request): Json<MintSocialMediaNftApiRequest>,
 ) -> ApiResult<impl IntoResponse> {
-    // Validate the request
-    request.validate().map_err(ApiError::from_validation_errors)?;
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
 
-    // Clone wallet_address before using it to avoid move issues
     let wallet_address = request.wallet_address.clone();
     let social_media_id = request.social_media_id.clone();
 
@@ -348,8 +533,8 @@ pub async fn mint_social_media_nft(
         social_media_id: Arc::from(request.social_media_id),
         token_uri: Arc::from(request.token_uri),
         metadata_hash: Arc::from(request.metadata_hash),
-        royalty_bps: request.royalty_bps,
         signature: Arc::from(request.signature),
+        royalty_bps: request.royalty_bps,
     };
 
     // Create contract service for this request
@@ -357,6 +542,7 @@ pub async fn mint_social_media_nft(
         std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string()),
         std::env::var("PRIVATE_KEY").map_err(|_| ApiError::internal_server_error("PRIVATE_KEY environment variable not set"))?,
         31337, // Default chain ID
+        state.pool,
     ).await.map_err(|e| ApiError::internal_server_error(format!("Failed to create contract service: {}", e)))?;
 
     let response = contract_service.mint_social_media_nft(wallet_address, contract_request).await
@@ -382,6 +568,427 @@ pub async fn mint_social_media_nft(
             "transaction_hash": response.transaction_hash.to_string(),
             "block_number": response.block_number
         },
+        "error": null
+    })))
+}
+
+/// Get all collections from the contract
+pub async fn get_all_collections(
+    State(state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    // Create read-only contract service for this request
+    let contract_service = create_read_only_contract_service(state.pool).await?;
+
+    match contract_service.get_all_collections().await {
+        Ok(collections) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": collections,
+                "message": "Collections retrieved successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// List an NFT for sale (wallet-only operation)
+pub async fn list_nft(
+    State(state): State<AppState>,
+    Json(request): Json<ListNftApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let list_request = ListNftRequest {
+        nft_contract: request.nft_contract.into(),
+        token_id: request.token_id,
+        price: request.price.parse().unwrap_or(0),
+        description: request.description.into(),
+    };
+
+    match contract_service.list_nft(request.wallet_address, list_request).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "NFT listed successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// List a non-NFT asset for sale (requires user authentication + wallet connection)
+pub async fn list_non_nft_asset(
+    State(state): State<AppState>,
+    Json(request): Json<ListNonNftAssetApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
+
+    // Get authenticated user (this will be handled by auth middleware in protected routes)
+    // For now, we'll create a mock user for demonstration
+    let user = crate::domain::models::User {
+        id: uuid::Uuid::new_v4(),
+        email: "test@example.com".to_string(),
+        password_hash: None,
+        google_id: None,
+        first_name: "Test".to_string(),
+        last_name: "User".to_string(),
+        username: Some("testuser".to_string()),
+        wallet_address: Some(request.wallet_address.clone()),
+        is_verified: true,
+        created_at: sqlx::types::chrono::Utc::now(),
+    };
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let list_request = ListNonNftAssetRequest {
+        asset_type: request.asset_type,
+        asset_id: request.asset_id.into(),
+        price: request.price.parse().unwrap_or(0),
+        description: request.description.clone().into(),
+        metadata: request.description.into(),
+        verification_proof: request.verification_proof.into(),
+    };
+
+    match contract_service.list_non_nft_asset(&user, request.wallet_address, list_request).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "Non-NFT asset listed successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// List a social media NFT for sale (signature generated internally)
+pub async fn list_social_media_nft(
+    State(state): State<AppState>,
+    Json(request): Json<ListSocialMediaNftApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let wallet_address = request.wallet_address.clone();
+    match contract_service.list_social_media_nft(wallet_address, request).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "Social media NFT listed successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// List an NFT for auction
+pub async fn list_nft_for_auction(
+    State(state): State<AppState>,
+    Json(request): Json<ListNftForAuctionApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let list_request = ListNftForAuctionRequest {
+        listing_id: request.listing_id,
+        is_nft: request.is_nft,
+    };
+
+    let wallet_address = request.wallet_address.clone();
+    match contract_service.list_nft_for_auction(wallet_address, list_request).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "NFT listed for auction successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// Buy an NFT listing
+pub async fn buy_nft(
+    State(state): State<AppState>,
+    Json(request): Json<BuyNftApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    // Get the listing details to get the price
+    let (_, _, _, price, _, _) = contract_service.get_nft_listing(request.listing_id).await
+        .map_err(|e| ApiError::bad_request(format!("Failed to get listing details: {}", e)))?;
+
+    let buy_request = BuyNftRequest {
+        listing_id: request.listing_id,
+    };
+
+    let wallet_address = request.wallet_address.clone();
+    match contract_service.buy_nft(wallet_address, buy_request, price).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "NFT purchased successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// Buy a non-NFT asset listing
+pub async fn buy_non_nft_asset(
+    State(state): State<AppState>,
+    Json(request): Json<BuyNonNftAssetApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let buy_request = BuyNonNftAssetRequest {
+        listing_id: request.listing_id,
+    };
+
+    let wallet_address = request.wallet_address.clone();
+    let price = request.price.parse().unwrap_or(0);
+    match contract_service.buy_non_nft_asset(wallet_address, buy_request, price).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "Non-NFT asset purchased successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// Cancel an NFT listing
+pub async fn cancel_nft_listing(
+    State(state): State<AppState>,
+    Json(request): Json<CancelNftListingApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let cancel_request = CancelNftListingRequest {
+        listing_id: request.listing_id,
+    };
+
+    let wallet_address = request.wallet_address.clone();
+    match contract_service.cancel_nft_listing(wallet_address, cancel_request).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "NFT listing cancelled successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// Cancel a non-NFT asset listing
+pub async fn cancel_non_nft_listing(
+    State(state): State<AppState>,
+    Json(request): Json<CancelNonNftListingApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Validate request
+    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let cancel_request = CancelNonNftListingRequest {
+        listing_id: request.listing_id,
+    };
+
+    let wallet_address = request.wallet_address.clone();
+    match contract_service.cancel_non_nft_listing(wallet_address, cancel_request).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "Non-NFT asset listing cancelled successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// Confirm transfer in escrow (buyer confirms they received the asset)
+pub async fn confirm_transfer(
+    State(state): State<AppState>,
+    auth_user: AuthenticatedUser,
+    Json(request): Json<ConfirmTransferApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+
+    // Get authenticated user from database
+    let user = state.auth_service.get_user_profile(auth_user.user_id)
+        .await
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+
+    // Ensure user has a connected wallet
+    let wallet_address = user.wallet_address.clone()
+        .ok_or_else(|| ApiError::bad_request("User must connect a wallet first"))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let confirm_request = ConfirmTransferRequest {
+        listing_id: request.listing_id,
+    };
+
+    match contract_service.confirm_transfer(&user, wallet_address, confirm_request).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "Transfer confirmed successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// Raise a dispute in escrow
+pub async fn raise_dispute(
+    State(state): State<AppState>,
+    auth_user: AuthenticatedUser,
+    Json(request): Json<RaiseDisputeApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+    // Get authenticated user from database
+    let user = state.auth_service.get_user_profile(auth_user.user_id)
+        .await
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+
+    // Ensure user has a connected wallet
+    let wallet_address = user.wallet_address.clone()
+        .ok_or_else(|| ApiError::bad_request("User must connect a wallet first"))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let dispute_request = RaiseDisputeRequest {
+        listing_id: request.listing_id,
+    };
+
+    match contract_service.raise_dispute(&user, wallet_address, dispute_request).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "Dispute raised successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// Refund escrow if deadline has passed
+pub async fn refund(
+    State(state): State<AppState>,
+    auth_user: AuthenticatedUser,
+    Json(request): Json<RefundApiRequest>,
+) -> ApiResult<impl IntoResponse> {
+
+    // Get authenticated user from database
+    let user = state.auth_service.get_user_profile(auth_user.user_id)
+        .await
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+
+    // Ensure user has a connected wallet
+    let wallet_address = user.wallet_address.clone()
+        .ok_or_else(|| ApiError::bad_request("User must connect a wallet first"))?;
+
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let refund_request = RefundRequest {
+        listing_id: request.listing_id,
+    };
+
+    match contract_service.refund(&user, wallet_address, refund_request).await {
+        Ok(response) => {
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": response,
+                "message": "Refund processed successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&e.to_string()))
+        }
+    }
+}
+
+/// Get all supported chains information
+pub async fn get_supported_chains(
+    State(_state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    // Get all supported chain configurations
+    let supported_chains = crate::infrastructure::contracts::config::get_supported_chains()
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+    
+    let chains_data: Vec<serde_json::Value> = supported_chains.into_iter().map(|chain_config| {
+        serde_json::json!({
+            "chain_id": chain_config.chain_id,
+            "chain_name": chain_config.name,
+            "chain_type": match chain_config.chain_type {
+                crate::infrastructure::contracts::types::ChainType::Polygon => "polygon",
+                crate::infrastructure::contracts::types::ChainType::Base => "base",
+            },
+            "rpc_url": chain_config.rpc_url,
+            "explorer_url": chain_config.explorer_url,
+            "native_currency": {
+                "name": chain_config.native_currency.name,
+                "symbol": chain_config.native_currency.symbol,
+                "decimals": chain_config.native_currency.decimals,
+            },
+            "gas_settings": {
+                "default_gas_limit": chain_config.gas_settings.default_gas_limit,
+                "max_gas_limit": chain_config.gas_settings.max_gas_limit,
+                "block_time_seconds": chain_config.gas_settings.block_time_seconds,
+            }
+        })
+    }).collect();
+    
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": chains_data,
         "error": null
     })))
 }

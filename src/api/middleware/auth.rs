@@ -6,7 +6,7 @@ use axum::{
 };
 use uuid::Uuid;
 
-use crate::application::services::AuthService;
+use crate::handlers::AppState;
 
 #[derive(Clone)]
 pub struct AuthenticatedUser {
@@ -14,7 +14,7 @@ pub struct AuthenticatedUser {
 }
 
 pub async fn auth_middleware(
-    State(auth_service): State<AuthService>,
+    State(app_state): State<AppState>,
     headers: HeaderMap,
     mut request: Request,
     next: Next,
@@ -27,7 +27,7 @@ pub async fn auth_middleware(
     let token = auth_header.strip_prefix("Bearer ")
         .ok_or("Invalid Bearer token")?;
 
-    let user_id_str = auth_service.verify_jwt(token)
+    let user_id_str = app_state.auth_service.verify_jwt(token)
         .map_err(|e| format!("JWT verification failed: {:?}", e))?;
 
     let user_id = Uuid::parse_str(&user_id_str)

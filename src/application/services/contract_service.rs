@@ -1,38 +1,66 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::infrastructure::contracts::client::ContractClient;
+use sqlx::PgPool;
+use crate::infrastructure::contracts::client::{ContractClient, ReadOnlyContractClient};
+use crate::infrastructure::contracts::config::{get_current_chain_config, get_private_key};
+use crate::infrastructure::contracts::types::ChainConfig;
+// use crate::infrastructure::repositories::{
+//     ListingRepository,
+//     NftListingData,
+//     NonNftListingData,
+//     SocialMediaNftListingData
+// };
 use crate::domain::models::{
     MintNftRequest, MintNftResponse, User,
-    CreateEscrowRequest, CreateEscrowResponse,
-    ListAssetRequest, ListAssetResponse,
+    ListNonNftAssetRequest, ListNonNftAssetResponse,
     CreateCollectionRequest, CreateCollectionResponse,
     MintNftToCollectionRequest, MintNftToCollectionResponse,
     MintSocialMediaNftRequest, MintSocialMediaNftResponse,
-    InitiateSocialMediaNftMintRequest, InitiateSocialMediaNftMintResponse
+    InitiateSocialMediaNftMintRequest, InitiateSocialMediaNftMintResponse,
+    ListNftRequest, ListNftResponse,
+    ListSocialMediaNftRequest, ListNftForAuctionRequest, ListNftForAuctionResponse,
+    BuyNftRequest, BuyNftResponse, BuyNonNftAssetRequest, BuyNonNftAssetResponse,
+    CancelNftListingRequest, CancelNftListingResponse, CancelNonNftListingRequest, CancelNonNftListingResponse,
+    ConfirmTransferRequest, ConfirmTransferResponse, RaiseDisputeRequest, RaiseDisputeResponse,
+    RefundRequest, RefundResponse, Escrow,
+    // NftListing, NonNftListing, SocialMediaNftListing,
 };
 use crate::domain::services::ContractError;
-use crate::infrastructure::contracts::addresses;
 use crate::infrastructure::contracts::utils::verification::VerificationService;
-
+use crate::api::v1::contracts::ListSocialMediaNftApiRequest;
+use crate::domain::models::Collection;
 /// Service layer for contract operations
 /// This provides a higher-level interface that handles wallet connection and business logic
 pub struct ContractService {
     client: Arc<RwLock<ContractClient>>,
-    network_config: crate::infrastructure::contracts::types::NetworkConfig,
+    chain_config: ChainConfig,
+    // listing_repository: ListingRepository,
+}
+
+pub struct ReadOnlyContractService {
+    client: Arc<RwLock<ReadOnlyContractClient>>,
+    chain_config: ChainConfig,
+    // listing_repository: ListingRepository,
 }
 
 impl ContractService {
-    /// Create a new contract service
+    /// Create a new contract service using current chain configuration
     pub async fn new(
         rpc_url: String,
         private_key: String,
         chain_id: u64,
+        _db_pool: PgPool,
     ) -> Result<Self, ContractError> {
-        // Get network configuration
-        let network_config = addresses::get_network_config_by_chain_id(chain_id)?;
+        // Get current chain configuration
+        let chain_config = get_current_chain_config()?;
 
-        // Get contract addresses
-        let contract_addresses = addresses::get_contract_addresses_by_chain_id(chain_id)?;
+        // Validate that the requested chain ID matches the current configuration
+        if chain_config.chain_id != chain_id {
+            return Err(ContractError::InvalidAddress(format!(
+                "Chain ID mismatch: requested {}, configured {}",
+                chain_id, chain_config.chain_id
+            )));
+        }
 
         // Create verification service
         let verification_service = VerificationService::new(&private_key)?;
@@ -41,20 +69,56 @@ impl ContractService {
         let client = ContractClient::new(
             rpc_url,
             private_key,
-            network_config.clone(),
-            contract_addresses,
+            chain_config.clone(),
             verification_service,
         ).await?;
 
         Ok(Self {
             client: Arc::new(RwLock::new(client)),
-            network_config,
+            chain_config,
+            // listing_repository: ListingRepository::new(db_pool),
         })
     }
 
-    // WALLET-CONNECTED OPERATIONS
-    // These operations require wallet connection but not user authentication
-    // Suitable for NFT-related operations that are trustless and on-chain
+    /// Create a new contract service with automatic private key handling
+    pub async fn new_with_auto_private_key(
+        rpc_url: String,
+        chain_id: u64,
+        _db_pool: PgPool,
+    ) -> Result<Self, ContractError> {
+        let private_key = get_private_key()?;
+        Self::new(rpc_url, private_key, chain_id, _db_pool).await
+    }
+
+    /// Create a read-only contract service for view functions
+    pub async fn new_read_only(
+        rpc_url: String,
+        chain_id: u64,
+        _db_pool: PgPool,
+    ) -> Result<ReadOnlyContractService, ContractError> {
+        // Get current chain configuration
+        let chain_config = get_current_chain_config()?;
+
+        // Validate that the requested chain ID matches the current configuration
+        if chain_config.chain_id != chain_id {
+            return Err(ContractError::InvalidAddress(format!(
+                "Chain ID mismatch: requested {}, configured {}", 
+                chain_id, chain_config.chain_id
+            )));
+        }
+
+        // Create read-only contract client
+        let client = ReadOnlyContractClient::new(
+            rpc_url,
+            chain_config.clone(),
+        ).await?;
+
+        Ok(ReadOnlyContractService {
+            client: Arc::new(RwLock::new(client)),
+            chain_config,
+            // listing_repository: ListingRepository::new(db_pool),
+        })
+    }
 
     /// Create a collection (requires wallet connection only)
     pub async fn create_collection(&self, wallet_address: String, request: CreateCollectionRequest) -> Result<CreateCollectionResponse, ContractError> {
@@ -108,7 +172,7 @@ impl ContractService {
     }
 
     /// Initiate social media NFT minting process
-    /// This method generates all necessary data including signature for the minting process
+    /// This function generates all necessary data including signature for the minting process
     pub async fn initiate_social_media_nft_mint(
         &self,
         wallet_address: String,
@@ -127,16 +191,14 @@ impl ContractService {
     }
 
     // AUTHENTICATED OPERATIONS
-    // These operations require both user authentication AND wallet connection
-    // Suitable for non-NFT assets like manual transfers, escrow, etc.
 
-    /// Create an escrow for manual transfer (requires user authentication + wallet connection)
-    pub async fn create_escrow(
+    /// Confirm transfer in escrow (buyer confirms they received the asset)
+    pub async fn confirm_transfer(
         &self,
         user: &User,
         wallet_address: String,
-        request: CreateEscrowRequest
-    ) -> Result<CreateEscrowResponse, ContractError> {
+        request: ConfirmTransferRequest
+    ) -> Result<ConfirmTransferResponse, ContractError> {
         // Verify user is authenticated and verified
         self.verify_user_authentication(user).await?;
 
@@ -149,18 +211,106 @@ impl ContractService {
         // Verify wallet has sufficient balance for gas
         self.verify_wallet_balance().await?;
 
-        // Call the client to create escrow
+        // Call the client to confirm transfer
         let client = self.client.read().await;
-        client.create_escrow(request).await
+        client.confirm_transfer(request).await
     }
 
-    /// List a non-NFT asset (requires user authentication + wallet connection)
+    /// Raise a dispute in escrow (can be called by either seller or buyer)
+    pub async fn raise_dispute(
+        &self,
+        user: &User,
+        wallet_address: String,
+        request: RaiseDisputeRequest
+    ) -> Result<RaiseDisputeResponse, ContractError> {
+        // Verify user is authenticated and verified
+        self.verify_user_authentication(user).await?;
+
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Verify wallet matches user's connected wallet
+        self.verify_user_wallet_match(user, &wallet_address).await?;
+
+        // Verify wallet has sufficient balance for gas
+        self.verify_wallet_balance().await?;
+
+        // Call the client to raise dispute
+        let client = self.client.read().await;
+        client.raise_dispute(request).await
+    }
+
+    /// Refund escrow if deadline has passed (anyone can call this)
+    pub async fn refund(
+        &self,
+        user: &User,
+        wallet_address: String,
+        request: RefundRequest
+    ) -> Result<RefundResponse, ContractError> {
+        // Verify user is authenticated and verified
+        self.verify_user_authentication(user).await?;
+
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Verify wallet matches user's connected wallet
+        self.verify_user_wallet_match(user, &wallet_address).await?;
+
+        // Verify wallet has sufficient balance for gas
+        self.verify_wallet_balance().await?;
+
+        // Call the client to process refund
+        let client = self.client.read().await;
+        client.refund(request).await
+    }
+
+    /// List an NFT for sale (wallet-only operation)
+    pub async fn list_nft(
+        &self,
+        wallet_address: String,
+        request: ListNftRequest
+    ) -> Result<ListNftResponse, ContractError> {
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Verify wallet has sufficient balance for gas
+        self.verify_wallet_balance().await?;
+
+        // Call the client to list NFT
+        let client = self.client.read().await;
+        let response = client.list_nft(request.clone()).await?;
+
+        // // Store listing in database
+        // let db_listing = NftListingData {
+        //     id: uuid::Uuid::new_v4(),
+        //     listing_id: response.listing_id as i64,
+        //     creator_address: response.creator.to_string(),
+        //     nft_contract: request.nft_contract.to_string(),
+        //     token_id: request.token_id as i64,
+        //     price: request.price as i64,
+        //     description: request.description.to_string(),
+        //     active: response.active,
+        //     is_auction: response.is_auction,
+        //     metadata_uri: None, // Could be added later if needed
+        //     transaction_hash: response.transaction_hash.clone(),
+        //     block_number: response.block_number as i64,
+        //     created_at: sqlx::types::chrono::Utc::now(),
+        //     updated_at: sqlx::types::chrono::Utc::now(),
+        // };
+
+        // self.listing_repository.create_nft_listing(&db_listing).await
+        //     .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
+
+        Ok(response)
+    }
+
+    /// List a non-NFT asset for sale (requires user authentication + wallet connection)
     pub async fn list_non_nft_asset(
         &self,
         user: &User,
         wallet_address: String,
-        request: ListAssetRequest
-    ) -> Result<ListAssetResponse, ContractError> {
+        request: ListNonNftAssetRequest
+    ) -> Result<ListNonNftAssetResponse, ContractError> {
         // Verify user is authenticated and verified
         self.verify_user_authentication(user).await?;
 
@@ -173,9 +323,153 @@ impl ContractService {
         // Verify wallet has sufficient balance for gas
         self.verify_wallet_balance().await?;
 
-        // Call the client to list asset
+        // Validate request parameters
+        self.validate_non_nft_listing_request(&request).await?;
+
+        // Call the client to list non-NFT asset
         let client = self.client.read().await;
-        client.list_asset(request).await
+        let response = client.list_non_nft_asset(request.clone()).await?;
+
+        // Parse asset identifier to extract platform and identifier
+        // let (platform, identifier) = self.parse_asset_identifier(&request.asset_id, request.asset_type)?;
+
+        // // Store listing in database
+        // let db_listing = NonNftListingData {
+        //     id: uuid::Uuid::new_v4(),
+        //     listing_id: response.listing_id as i64,
+        //     creator_address: response.creator.to_string(),
+        //     asset_type: request.asset_type as i16,
+        //     asset_id: request.asset_id.to_string(),
+        //     price: request.price as i64,
+        //     description: request.description.to_string(),
+        //     platform: Some(platform),
+        //     identifier: Some(identifier),
+        //     metadata_uri: Some(response.metadata.to_string()),
+        //     verification_proof: Some(response.verification_proof.to_string()),
+        //     transaction_hash: response.transaction_hash.to_string(),
+        //     block_number: response.block_number as i64,
+        //     created_at: sqlx::types::chrono::Utc::now(),
+        //     updated_at: sqlx::types::chrono::Utc::now(),
+        // };
+
+        // self.listing_repository.create_non_nft_listing(&db_listing).await
+        //     .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
+
+        Ok(response)
+    }
+
+    /// Validate non-NFT listing request parameters
+    async fn validate_non_nft_listing_request(&self, request: &ListNonNftAssetRequest) -> Result<(), ContractError> {
+
+        // Validate asset type
+        if request.asset_type < 1 || request.asset_type > 5 {
+            return Err(ContractError::ContractCallError(
+                format!("Invalid asset type: {}. Must be between 1-5", request.asset_type)
+            ));
+        }
+
+        // Validate price
+        if request.price == 0 {
+            return Err(ContractError::ContractCallError(
+                "Price must be greater than 0".to_string()
+            ));
+        }
+
+        // Validate asset ID
+        if request.asset_id.is_empty() {
+            return Err(ContractError::ContractCallError(
+                "Asset ID cannot be empty".to_string()
+            ));
+        }
+
+        // Validate metadata
+        if request.metadata.is_empty() {
+            return Err(ContractError::ContractCallError(
+                "Metadata cannot be empty".to_string()
+            ));
+        }
+
+        // Validate verification proof
+        if request.verification_proof.is_empty() {
+            return Err(ContractError::ContractCallError(
+                "Verification proof cannot be empty".to_string()
+            ));
+        }
+
+        // Validate description
+        if request.description.is_empty() {
+            return Err(ContractError::ContractCallError(
+                "Description cannot be empty".to_string()
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// List a social media NFT for sale
+    pub async fn list_social_media_nft(
+        &self,
+        wallet_address: String,
+        request: ListSocialMediaNftApiRequest
+    ) -> Result<ListNftResponse, ContractError> {
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Verify wallet has sufficient balance for gas
+        self.verify_wallet_balance().await?;
+
+        // Parse price from string
+        let price = request.price.parse::<u64>()
+            .map_err(|e| ContractError::ContractCallError(format!("Invalid price format: {}", e)))?;
+
+        // Generate signature internally using verification service
+        let client = self.client.read().await;
+        let verification_service = client.get_verification_service();
+        let wallet_address_parsed = wallet_address.parse::<ethers::types::Address>()
+            .map_err(|e| ContractError::InvalidAddress(e.to_string()))?;
+
+        let signature = verification_service.generate_listing_signature(
+            &wallet_address_parsed,
+            request.token_id,
+            price,
+            &request.social_media_id,
+        ).await?;
+
+        // Create the internal request with generated signature
+        let internal_request = ListSocialMediaNftRequest {
+            token_id: request.token_id,
+            price,
+            social_media_id: request.social_media_id.into(),
+            signature: signature.into(),
+            description: request.description.into(),
+        };
+
+        // Call the client to list social media NFT
+        let client = self.client.read().await;
+        let response = client.list_social_media_nft(internal_request).await?;
+
+        // // Store listing in database
+        // let db_listing = SocialMediaNftListingData {
+        //     id: uuid::Uuid::new_v4(),
+        //     listing_id: response.listing_id as i64,
+        //     creator_address: response.creator.to_string(),
+        //     token_id: request.token_id as i64,
+        //     price: request.price as i64,
+        //     description: request.description.to_string(),
+        //     social_media_id: request.social_media_id.to_string(),
+        //     signature: request.signature.to_string(),
+        //     active: response.active,
+        //     is_auction: response.is_auction,
+        //     transaction_hash: response.transaction_hash.clone(),
+        //     block_number: response.block_number as i64,
+        //     created_at: sqlx::types::chrono::Utc::now(),
+        //     updated_at: sqlx::types::chrono::Utc::now(),
+        // };
+
+        // self.listing_repository.create_social_media_nft_listing(&db_listing).await
+        //     .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
+
+        Ok(response)
     }
 
     /// Verify that the provided wallet address matches the connected wallet
@@ -200,8 +494,7 @@ impl ContractService {
 
     /// Verify that the wallet has sufficient balance for gas fees
     async fn verify_wallet_balance(&self) -> Result<(), ContractError> {
-        let client = self.client.read().await;
-        let balance = client.get_wallet_balance().await?;
+        let balance = self.get_wallet_balance().await?;
 
         // Check if balance is sufficient (minimum 0.01 ETH for gas)
         let min_balance = ethers::types::U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
@@ -210,6 +503,25 @@ impl ContractService {
             return Err(ContractError::InsufficientBalance {
                 current: format!("{:?}", balance),
                 required: "0.01 ETH".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Verify that the wallet has sufficient balance for purchase + gas fees
+    async fn verify_wallet_balance_for_purchase(&self, price: u64) -> Result<(), ContractError> {
+        let balance = self.get_wallet_balance().await?;
+
+        // Calculate required balance: price + gas fees (estimate 0.01 ETH for gas)
+        let gas_estimate = ethers::types::U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
+        let price_u256 = ethers::types::U256::from(price);
+        let required_balance = gas_estimate + price_u256;
+
+        if balance < required_balance {
+            return Err(ContractError::InsufficientBalance {
+                current: format!("{:?}", balance),
+                required: format!("{:?} (price: {:?} + gas: {:?})", required_balance, price_u256, gas_estimate),
             });
         }
 
@@ -263,14 +575,100 @@ impl ContractService {
     // UTILITY METHODS
 
     /// Get the current network configuration
-    pub fn get_network_config(&self) -> &crate::infrastructure::contracts::types::NetworkConfig {
-        &self.network_config
+    pub fn get_network_config(&self) -> &ChainConfig {
+        &self.chain_config
     }
 
-    /// Get the current wallet address
+    /// Get the wallet address
     pub async fn get_wallet_address(&self) -> String {
         let client = self.client.read().await;
-        format!("{:?}", client.get_wallet_address())
+        format!("0x{:x}", client.get_wallet_address())
+    }
+
+    /// Get wallet balance
+    pub async fn get_wallet_balance(&self) -> Result<ethers::types::U256, ContractError> {
+        let client = self.client.read().await;
+        let wallet_address = client.get_wallet_address();
+        let read_only_client = ReadOnlyContractClient::new(
+            client.get_provider_url(),
+            client.get_network_config().clone(),
+        ).await?;
+        read_only_client.get_wallet_balance(wallet_address).await
+    }
+
+    /// Check if a collection exists
+    pub async fn check_collection_exists(&self, collection_id: u64) -> Result<bool, ContractError> {
+        let client = self.client.read().await;
+        let read_only_client = ReadOnlyContractClient::new(
+            client.get_provider_url(),
+            client.get_network_config().clone(),
+        ).await?;
+        read_only_client.check_collection_exists(collection_id).await
+    }
+
+    /// Get NFT listing details
+    pub async fn get_nft_listing(&self, listing_id: u64) -> Result<(String, String, u64, u64, bool, bool), ContractError> {
+        let client = self.client.read().await;
+        let read_only_client = ReadOnlyContractClient::new(
+            client.get_provider_url(),
+            client.get_network_config().clone(),
+        ).await?;
+        read_only_client.get_nft_listing(listing_id).await
+    }
+
+    /// Get non-NFT listing details
+    pub async fn get_non_nft_listing(&self, listing_id: u64) -> Result<(String, u64, u8, bool, u8, String, String), ContractError> {
+        let client = self.client.read().await;
+        let read_only_client = ReadOnlyContractClient::new(
+            client.get_provider_url(),
+            client.get_network_config().clone(),
+        ).await?;
+        read_only_client.get_non_nft_listing(listing_id).await
+    }
+
+    /// Get all collections
+    pub async fn get_all_collections(&self) -> Result<Vec<Collection>, ContractError> {
+        let client = self.client.read().await;
+        let read_only_client = ReadOnlyContractClient::new(
+            client.get_provider_url(),
+            client.get_network_config().clone(),
+        ).await?;
+        read_only_client.get_all_collections().await
+    }
+
+    /// Get collection by ID
+    pub async fn get_collection_by_id(&self, collection_id: u64) -> Result<Collection, ContractError> {
+        let client = self.client.read().await;
+        let read_only_client = ReadOnlyContractClient::new(
+            client.get_provider_url(),
+            client.get_network_config().clone(),
+        ).await?;
+        read_only_client.get_collection_by_id(collection_id).await
+    }
+
+    /// Get collections by creator
+    pub async fn get_collections_by_creator(&self, creator_address: String) -> Result<Vec<Collection>, ContractError> {
+        let client = self.client.read().await;
+        let read_only_client = ReadOnlyContractClient::new(
+            client.get_provider_url(),
+            client.get_network_config().clone(),
+        ).await?;
+        read_only_client.get_collections_by_creator(creator_address).await
+    }
+
+    /// Get escrow details for a listing
+    pub async fn get_escrow(&self, listing_id: u64) -> Result<Escrow, ContractError> {
+        let client = self.client.read().await;
+        let read_only_client = ReadOnlyContractClient::new(
+            client.get_provider_url(),
+            client.get_network_config().clone(),
+        ).await?;
+        read_only_client.get_escrow(listing_id).await
+    }
+
+    /// Get the underlying contract client (for operations that need wallet)
+    pub async fn get_client(&self) -> ContractClient {
+        self.client.read().await.clone()
     }
 
     /// Check if the service is connected to the blockchain
@@ -281,14 +679,114 @@ impl ContractService {
         true // For now, assume connected
     }
 
-    /// Get wallet balance
-    pub async fn get_wallet_balance(&self) -> Result<ethers::types::U256, ContractError> {
+    /// List an NFT for auction
+    pub async fn list_nft_for_auction(
+        &self,
+        wallet_address: String,
+        request: ListNftForAuctionRequest,
+    ) -> Result<ListNftForAuctionResponse, ContractError> {
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Verify wallet has sufficient balance for gas
+        self.verify_wallet_balance().await?;
+
+        // Call the client to list for auction
         let client = self.client.read().await;
-        client.get_wallet_balance().await
+
+        if request.is_nft {
+            client.list_nft_for_auction(request.listing_id).await
+        } else {
+            client.list_non_nft_for_auction(request.listing_id).await
+        }
     }
 
-    /// Get the underlying contract client
-    pub async fn get_client(&self) -> ContractClient {
-        self.client.read().await.clone()
+    /// Buy an NFT listing
+    pub async fn buy_nft(
+        &self,
+        wallet_address: String,
+        request: BuyNftRequest,
+        price: u64,
+    ) -> Result<BuyNftResponse, ContractError> {
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Verify wallet has sufficient balance for purchase + gas
+        self.verify_wallet_balance_for_purchase(price).await?;
+
+        // Call the client to buy NFT
+        let client = self.client.read().await;
+        client.buy_nft(request.listing_id, price).await
+    }
+
+    /// Buy a non-NFT asset listing
+    pub async fn buy_non_nft_asset(
+        &self,
+        wallet_address: String,
+        request: BuyNonNftAssetRequest,
+        price: u64,
+    ) -> Result<BuyNonNftAssetResponse, ContractError> {
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Verify wallet has sufficient balance for purchase + gas
+        self.verify_wallet_balance_for_purchase(price).await?;
+
+        // Call the client to buy non-NFT asset
+        let client = self.client.read().await;
+        client.buy_non_nft_asset(request.listing_id, price).await
+    }
+
+    /// Cancel an NFT listing
+    pub async fn cancel_nft_listing(
+        &self,
+        wallet_address: String,
+        request: CancelNftListingRequest,
+    ) -> Result<CancelNftListingResponse, ContractError> {
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Call the client to cancel NFT listing
+        let client = self.client.read().await;
+        client.cancel_nft_listing(request.listing_id).await
+    }
+
+    /// Cancel a non-NFT asset listing
+    pub async fn cancel_non_nft_listing(
+        &self,
+        wallet_address: String,
+        request: CancelNonNftListingRequest,
+    ) -> Result<CancelNonNftListingResponse, ContractError> {
+        // Verify wallet connection
+        self.verify_wallet_connection(&wallet_address).await?;
+
+        // Call the client to cancel non-NFT asset listing
+        let client = self.client.read().await;
+        client.cancel_non_nft_listing(request.listing_id).await
+    }
+
+
+}
+
+impl ReadOnlyContractService {
+    /// Get all collections from the contract
+    pub async fn get_all_collections(&self) -> Result<Vec<Collection>, ContractError> {
+        let client = self.client.read().await;
+        client.get_all_collections().await
+    }
+
+    /// Get a specific collection by ID
+    pub async fn get_collection_by_id(&self, collection_id: u64) -> Result<Collection, ContractError> {
+        let client = self.client.read().await;
+        client.get_collection_by_id(collection_id).await
+    }
+
+    pub async fn get_collections_by_creator(&self, creator_address: String) -> Result<Vec<Collection>, ContractError> {
+        let client = self.client.read().await;
+        client.get_collections_by_creator(creator_address).await
+    }
+
+    pub fn get_network_config(&self) -> &ChainConfig {
+        &self.chain_config
     }
 }

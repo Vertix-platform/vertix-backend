@@ -14,9 +14,13 @@ pub struct AppState {
 
 pub async fn create_router(pool: PgPool) -> Router {
     let auth_service = AuthService::new(pool.clone());
+    let app_state = AppState {
+        pool,
+        auth_service,
+    };
 
     Router::new()
-        .nest("/v1", create_v1_router(auth_service))
+        .nest("/v1", create_v1_router(app_state))
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any))
         .layer(TraceLayer::new_for_http())
 }

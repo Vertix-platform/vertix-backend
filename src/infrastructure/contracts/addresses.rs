@@ -16,34 +16,34 @@ pub fn load_local_addresses() -> Result<ContractAddresses, ContractError> {
 
     // Fallback to hardcoded addresses for development (Updated from latest deployment)
     Ok(ContractAddresses {
-        vertix_nft: "0xfaAddC93baf78e89DCf37bA67943E1bE8F37Bb8c"
+        vertix_nft: "0xF6a8aD553b265405526030c2102fda2bDcdDC177"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        vertix_governance: "0x22753E4264FDDc6181dc7cce468904A80a363E44"
+        vertix_governance: "0x666432Ccb747B2220875cE185f487Ed53677faC9"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        vertix_escrow: "0xD0141E899a65C95a556fE2B27e5982A6DE7fDD7A"
+        vertix_escrow: "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_core: "0x5bf5b11053e734690269C6B9D438F8C9d48F528A"
+        marketplace_core: "0x18E317A7D70d8fBf8e6E893616b52390EbBdb629"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_auctions: "0xffa7CA1AEEEbBc30C874d32C7e22F052BbEa0429"
+        marketplace_auctions: "0x51A1ceB83B83F1985a81C295d1fF28Afef186E02"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_fees: "0x3155755b79aA083bd953911C92705B7aA82a18F9"
+        marketplace_fees: "0xD8a5a9b31c3C0232E196d518E89Fd8bF83AcAd43"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_storage: "0xc0F115A19107322cFBf1cDBC7ea011C19EbDB4F8"
+        marketplace_storage: "0xB0D4afd8879eD9F52b28595d31B441D079B2Ca07"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        marketplace_proxy: "0x3aAde2dCD2Df6a8cAc689EE797591b2913658659"
+        marketplace_proxy: "0xD1760AA0FCD9e64bA4ea43399Ad789CFd63C7809"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        cross_chain_bridge: "0x3347B4d90ebe72BeFb30444C9966B2B990aE9FcB"
+        cross_chain_bridge: "0x2E2Ed0Cfd3AD2f1d34481277b3204d807Ca2F8c2"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
-        cross_chain_registry: "0xc96304e3c037f81dA488ed9dEa1D8F2a48278a75"
+        cross_chain_registry: "0x162A433068F51e18b7d13932F27e66a3f99E6890"
             .parse::<Address>()
             .map_err(|e| ContractError::InvalidAddress(e.to_string()))?,
     })
@@ -69,6 +69,17 @@ pub fn load_base_addresses() -> Result<ContractAddresses, ContractError> {
 
     // Fallback to error if no deployment found
     Err(ContractError::ContractCallError("Base Sepolia addresses not found. Run deployment first.".to_string()))
+}
+
+// Load contract addresses for Polygon zkEVM network
+pub fn load_polygon_zkevm_addresses() -> Result<ContractAddresses, ContractError> {
+    // Try to load from generated file first
+    if let Ok(addresses) = load_addresses_from_file("src/infrastructure/contracts/addresses/deployed_addresses_polygon_zkevm.json") {
+        return convert_json_to_addresses(addresses);
+    }
+
+    // Fallback to error if no deployment found
+    Err(ContractError::ContractCallError("Polygon zkEVM addresses not found. Run deployment first.".to_string()))
 }
 
 // Load addresses from JSON file
@@ -200,6 +211,8 @@ pub fn get_contract_addresses_by_chain_id(chain_id: u64) -> Result<ContractAddre
         137 => load_polygon_addresses(), // Polygon mainnet (same addresses for now)
         84532 => load_base_addresses(), // Base Sepolia testnet
         8453 => load_base_addresses(), // Base mainnet (same addresses for now)
+        1101 => load_polygon_zkevm_addresses(), // Polygon zkEVM mainnet
+        1442 => load_polygon_zkevm_addresses(), // Polygon zkEVM testnet
         _ => Err(ContractError::ContractCallError(format!("Unsupported chain ID: {}", chain_id))),
     }
 }

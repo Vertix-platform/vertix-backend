@@ -1,120 +1,6 @@
 use serde::{Deserialize, Serialize};
 use ethers::types::{Address};
 
-// ============ CONTRACT INTERACTION TYPES ============
-
-/// Request to mint an NFT
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MintNftRequest {
-    pub token_uri: String,
-    pub metadata_hash: String,
-    pub collection_id: Option<u64>,
-    pub royalty_bps: Option<u64>, // Royalty percentage in basis points (e.g., 500 = 5%)
-}
-
-/// Request to list an NFT for sale
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ListNftRequest {
-    pub nft_contract: String,
-    pub token_id: u64,
-    pub price: String, // Price in wei as string
-}
-
-/// Request to buy an NFT
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BuyNftRequest {
-    pub listing_id: u64,
-}
-
-/// Request to create an auction
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateAuctionRequest {
-    pub listing_id: u64,
-    pub duration: u64, // Duration in seconds
-    pub reserve_price: String, // Reserve price in wei as string
-}
-
-/// Request to place a bid
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PlaceBidRequest {
-    pub listing_id: u64,
-}
-
-/// Request to list a non-NFT asset (social media account, website, etc.)
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ListNonNftAssetRequest {
-    pub asset_type: u8, // 1 = SocialMedia, 2 = Website, 3 = Domain, etc.
-    pub asset_id: String,
-    pub price: String,
-    pub description: String,
-    pub verification_proof: String,
-}
-
-/// Request to buy a non-NFT asset
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BuyNonNftAssetRequest {
-    pub listing_id: u64,
-}
-
-/// Request to bridge an asset to another chain
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BridgeAssetRequest {
-    pub contract_addr: String,
-    pub target_contract: String,
-    pub token_id: u64,
-    pub target_chain_type: u8,
-    pub asset_type: u8,
-    pub is_nft: bool,
-    pub asset_id: String,
-}
-
-// ============ RESPONSE TYPES ============
-
-/// Response for NFT minting
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MintNftResponse {
-    pub token_id: u64,
-    pub transaction_hash: String,
-    pub block_number: u64,
-}
-
-/// Response for listing creation
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ListNftResponse {
-    pub listing_id: u64,
-    pub transaction_hash: String,
-}
-
-/// Response for NFT purchase
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BuyNftResponse {
-    pub transaction_hash: String,
-    pub new_owner: String,
-}
-
-/// Response for auction creation
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateAuctionResponse {
-    pub auction_id: u64,
-    pub transaction_hash: String,
-    pub end_time: u64,
-}
-
-/// Response for bid placement
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PlaceBidResponse {
-    pub transaction_hash: String,
-    pub bid_amount: String,
-}
-
-/// Response for asset bridging
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BridgeAssetResponse {
-    pub request_id: String,
-    pub transaction_hash: String,
-    pub bridge_fee: String,
-}
-
 // ============ CONTRACT STATE TYPES ============
 
 /// NFT listing information
@@ -271,6 +157,44 @@ pub enum AssetType {
 pub enum ChainType {
     Polygon = 1,
     Base = 2,
+}
+
+/// Chain-specific configuration
+#[derive(Debug, Clone)]
+pub struct ChainConfig {
+    pub chain_id: u64,
+    pub chain_type: ChainType,
+    pub name: String,
+    pub rpc_url: String,
+    pub ws_url: Option<String>,
+    pub explorer_url: String,
+    pub native_currency: NativeCurrency,
+    pub gas_settings: GasSettings,
+    pub contract_addresses: ContractAddresses,
+}
+
+/// Gas settings for different chains
+#[derive(Debug, Clone)]
+pub struct GasSettings {
+    pub default_gas_limit: u64,
+    pub max_gas_limit: u64,
+    pub gas_price_strategy: GasPriceStrategy,
+    pub block_time_seconds: u64,
+}
+
+/// Gas price strategy for different chains
+#[derive(Debug, Clone)]
+pub enum GasPriceStrategy {
+    Fixed(u64),
+    Dynamic,
+    Eip1559,
+}
+
+/// Multi-chain configuration
+#[derive(Debug, Clone)]
+pub struct MultiChainConfig {
+    pub current_chain: ChainConfig,
+    pub supported_chains: Vec<ChainConfig>,
 }
 
 /// Transaction status

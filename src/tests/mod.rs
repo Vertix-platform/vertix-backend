@@ -3,6 +3,7 @@ pub mod contract_tests;
 pub mod auth_tests;
 #[cfg(test)]
 pub mod validation_tests;
+pub mod admin_tests;
 
 // Re-export test modules for easy access
 pub use contract_tests::*;

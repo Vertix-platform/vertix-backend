@@ -9,10 +9,10 @@ use crate::api::dto::{
     GoogleAuthResponse, ConnectWalletRequest, NonceRequest, NonceResponse, UserResponse
 };
 use crate::api::middleware::AuthenticatedUser;
-use crate::application::services::AuthService;
+use crate::handlers::AppState;
 
 pub async fn register_handler(
-    State(auth_service): State<AuthService>,
+    State(app_state): State<AppState>,
     Json(request): Json<RegisterRequest>,
 ) -> Result<Json<LoginResponse>, String> {
     // Input validation
@@ -22,7 +22,7 @@ pub async fn register_handler(
     }
 
     // Delegate to application service
-    let response = auth_service.register(
+    let response = app_state.auth_service.register(
         &request.email,
         &request.password,
         &request.first_name,
@@ -36,10 +36,10 @@ pub async fn register_handler(
 }
 
 pub async fn login_handler(
-    State(auth_service): State<AuthService>,
+    State(app_state): State<AppState>,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, String> {
-    let response = auth_service.login(&request.email, &request.password)
+    let response = app_state.auth_service.login(&request.email, &request.password)
         .await
         .map_err(|e| format!("Login failed: {:?}", e))?;
 
@@ -48,15 +48,15 @@ pub async fn login_handler(
 }
 
 pub async fn google_auth_handler() -> Json<GoogleAuthResponse> {
-    let (auth_url, _csrf_token) = AuthService::google_auth_url();
+    let (auth_url, _csrf_token) = crate::application::services::AuthService::google_auth_url();
     Json(GoogleAuthResponse { auth_url })
 }
 
 pub async fn google_callback_handler(
-    State(auth_service): State<AuthService>,
+    State(app_state): State<AppState>,
     Query(query): Query<GoogleCallbackQuery>,
 ) -> Result<Json<LoginResponse>, String> {
-    let response = auth_service.google_callback(&query.code, &query.state)
+    let response = app_state.auth_service.google_callback(&query.code, &query.state)
         .await
         .map_err(|e| format!("Google OAuth failed: {:?}", e))?;
 
@@ -65,11 +65,11 @@ pub async fn google_callback_handler(
 }
 
 pub async fn connect_wallet_handler(
-    State(auth_service): State<AuthService>,
+    State(app_state): State<AppState>,
     authenticated_user: AuthenticatedUser,
     Json(request): Json<ConnectWalletRequest>,
 ) -> Result<Json<UserResponse>, String> {
-    let user = auth_service.connect_wallet(Some(authenticated_user.user_id), request)
+    let user = app_state.auth_service.connect_wallet(Some(authenticated_user.user_id), request)
         .await
         .map_err(|e| format!("Wallet connection failed: {:?}", e))?;
 
@@ -88,10 +88,10 @@ pub async fn connect_wallet_handler(
 }
 
 pub async fn nonce_handler(
-    State(auth_service): State<AuthService>,
+    State(app_state): State<AppState>,
     Json(request): Json<NonceRequest>,
 ) -> Result<Json<NonceResponse>, String> {
-    let nonce = auth_service.create_nonce(&request.wallet_address)
+    let nonce = app_state.auth_service.create_nonce(&request.wallet_address)
         .await
         .map_err(|e| format!("Nonce creation failed: {:?}", e))?;
 

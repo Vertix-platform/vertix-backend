@@ -34,6 +34,169 @@ pub struct UpdateProfileRequest {
 }
 
 // ============ CONTRACT-RELATED MODELS ============
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Collection {
+    pub collection_id: u64,
+    pub name: Arc<str>,
+    pub symbol: Arc<str>,
+    pub image: Arc<str>,
+    pub max_supply: u16,
+    pub creator: Arc<str>,
+    pub current_supply: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Escrow {
+    pub listing_id: u64,
+    pub seller: Arc<str>,
+    pub buyer: Arc<str>,
+    pub amount: u64,
+    pub deadline: u64,
+    pub completed: bool,
+    pub disputed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmTransferRequest {
+    pub listing_id: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConfirmTransferResponse {
+    pub listing_id: u64,
+    pub transaction_hash: Arc<str>,
+    pub seller: Arc<str>,
+    pub amount: u64,
+    pub block_number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RaiseDisputeRequest {
+    pub listing_id: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RaiseDisputeResponse {
+    pub listing_id: u64,
+    pub transaction_hash: Arc<str>,
+    pub raiser: Arc<str>, // Address of who raised the dispute
+    pub block_number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RefundRequest {
+    pub listing_id: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefundResponse {
+    pub listing_id: u64,
+    pub transaction_hash: Arc<str>,
+    pub buyer: Arc<str>,
+    pub amount: u64,
+    pub block_number: u64,
+}
+
+// ============ ADMIN MODELS ============
+
+#[derive(Debug, Deserialize)]
+pub struct AddSupportedNftContractRequest {
+    pub nft_contract: Arc<str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AddSupportedNftContractResponse {
+    pub nft_contract: Arc<str>,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveSupportedNftContractRequest {
+    pub nft_contract: Arc<str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoveSupportedNftContractResponse {
+    pub nft_contract: Arc<str>,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPlatformFeeRequest {
+    pub new_fee: u16, // Basis points (e.g., 100 = 1%)
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetPlatformFeeResponse {
+    pub new_fee: u16,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetFeeRecipientRequest {
+    pub new_recipient: Arc<str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetFeeRecipientResponse {
+    pub new_recipient: Arc<str>,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResolveDisputeRequest {
+    pub listing_id: u64,
+    pub winner: Arc<str>, // Address of the winner (seller or buyer)
+}
+
+#[derive(Debug, Serialize)]
+pub struct ResolveDisputeResponse {
+    pub listing_id: u64,
+    pub winner: Arc<str>,
+    pub amount: u64,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetEscrowDurationRequest {
+    pub new_duration: u32, // Duration in seconds
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetEscrowDurationResponse {
+    pub new_duration: u32,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PauseContractRequest {
+    pub contract_type: Arc<str>, // "escrow", "marketplace", etc.
+}
+
+#[derive(Debug, Serialize)]
+pub struct PauseContractResponse {
+    pub contract_type: Arc<str>,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnpauseContractRequest {
+    pub contract_type: Arc<str>, // "escrow", "marketplace", etc.
+}
+
+#[derive(Debug, Serialize)]
+pub struct UnpauseContractResponse {
+    pub contract_type: Arc<str>,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct CreateCollectionRequest {
@@ -101,41 +264,6 @@ pub struct MintNftToCollectionResponse {
     pub block_number: u64,
 }
 
-// ============ NON-NFT ASSET MODELS ============
-
-#[derive(Debug, Deserialize)]
-pub struct CreateEscrowRequest {
-    pub asset_type: String, // "social_media", "website", "domain", etc.
-    pub asset_id: String,   // Platform-specific ID or URL
-    pub price: String,      // Price in ETH/wei
-    pub description: String,
-    pub verification_data: serde_json::Value, // Platform-specific verification data
-}
-
-#[derive(Debug, Serialize)]
-pub struct CreateEscrowResponse {
-    pub escrow_id: String,
-    pub transaction_hash: String,
-    pub block_number: u64,
-    pub escrow_address: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ListAssetRequest {
-    pub asset_type: String, // "social_media", "website", "domain", etc.
-    pub asset_id: String,   // Platform-specific ID or URL
-    pub price: String,      // Price in ETH/wei
-    pub description: String,
-    pub verification_data: serde_json::Value, // Platform-specific verification data
-}
-
-#[derive(Debug, Serialize)]
-pub struct ListAssetResponse {
-    pub listing_id: String,
-    pub transaction_hash: String,
-    pub block_number: u64,
-}
-
 #[derive(Debug, Clone)]
 pub struct MintSocialMediaNftRequest {
     pub to: Arc<str>,
@@ -154,6 +282,7 @@ pub struct MintSocialMediaNftResponse {
     pub social_media_id: Arc<str>,
     pub uri: Arc<str>,
     pub metadata_hash: Arc<str>,
+    pub signature: Arc<str>,
     pub royalty_recipient: Arc<str>,
     pub royalty_bps: u16,
     pub transaction_hash: Arc<str>,
@@ -185,4 +314,253 @@ pub struct InitiateSocialMediaNftMintResponse {
     pub metadata: Arc<str>, // Full metadata JSON
 }
 
-// Domain error and response models can stay or be moved to api layer as needed
+/// Request to list an NFT for sale
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ListNftRequest {
+    pub nft_contract: Arc<str>,
+    pub token_id: u64,
+    pub price: u64, // Price in wei as string
+    pub description: Arc<str>, // User-provided description for the listing
+}
+
+/// Response for listing creation
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListNftResponse {
+    pub listing_id: u64,
+    pub creator: Arc<str>,
+    pub nft_contract: Arc<str>,
+    pub token_id: u64,
+    pub price: u64,
+    pub description: Arc<str>, // User-provided description
+    pub active: bool,
+    pub is_auction: bool,
+    pub created_at: u64,
+    pub transaction_hash: String,
+    pub block_number: u64, // Added missing field
+    pub chain_id: u64, // Chain where the NFT was listed
+}
+
+#[derive(Debug, Clone)]
+pub struct ListSocialMediaNftRequest {
+    pub token_id: u64,
+    pub price: u64,
+    pub social_media_id: Arc<str>,
+    pub signature: Arc<str>,
+    pub description: Arc<str>, // User-provided description
+}
+
+// ============ NON-NFT ASSET MODELS ============
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ListNonNftAssetRequest {
+    pub asset_type: u8, // 1 = SocialMedia, 2 = Website, 3 = Domain, etc.
+    pub asset_id: Arc<str>,   // Platform-specific ID or URL
+    pub price: u64,      // Price in ETH/wei
+    pub description: Arc<str>, // User-provided description for the listing
+    pub metadata: Arc<str>,
+    pub verification_proof: Arc<str>, // Platform-specific verification data
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListNonNftAssetResponse {
+    pub listing_id: u64,
+    pub creator: Arc<str>,
+    pub asset_type: u8,
+    pub asset_id: Arc<str>,
+    pub price: u64,
+    pub description: Arc<str>, // User-provided description
+    pub metadata: Arc<str>,
+    pub verification_proof: Arc<str>,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+    pub chain_id: u64, // Chain where the asset was listed
+}
+
+/// Request to place a bid
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlaceBidRequest {
+    pub listing_id: u64,
+}
+
+/// Response for NFT purchase
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BuyNftResponse {
+    pub transaction_hash: String,
+    pub new_owner: String,
+    pub price: u64,
+    pub royalty_amount: u64,
+    pub royalty_recipient: String,
+    pub platform_fee: u64,
+    pub platform_recipient: String,
+}
+
+/// Response for auction creation
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateAuctionResponse {
+    pub auction_id: u64,
+    pub transaction_hash: String,
+    pub end_time: u64,
+}
+
+/// Response for bid placement
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PlaceBidResponse {
+    pub transaction_hash: String,
+    pub bid_amount: String,
+}
+
+/// Request to buy a non-NFT asset
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BuyNonNftAssetRequest {
+    pub listing_id: u64,
+}
+
+/// Response for non-NFT asset purchase
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BuyNonNftAssetResponse {
+    pub listing_id: u64,
+    pub transaction_hash: String,
+    pub buyer: String,
+    pub price: u64,
+    pub seller_amount: u64,
+    pub platform_fee: u64,
+    pub platform_recipient: String,
+}
+
+/// Request to cancel an NFT listing
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CancelNftListingRequest {
+    pub listing_id: u64,
+}
+
+/// Response for NFT listing cancellation
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CancelNftListingResponse {
+    pub listing_id: u64,
+    pub transaction_hash: String,
+    pub seller: String,
+    pub is_nft: bool,
+}
+
+/// Request to cancel a non-NFT listing
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CancelNonNftListingRequest {
+    pub listing_id: u64,
+}
+
+/// Response for non-NFT listing cancellation
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CancelNonNftListingResponse {
+    pub listing_id: u64,
+    pub transaction_hash: String,
+    pub seller: String,
+    pub is_nft: bool,
+}
+
+/// Request to bridge an asset to another chain
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BridgeAssetRequest {
+    pub contract_addr: String,
+    pub target_contract: String,
+    pub token_id: u64,
+    pub target_chain_type: u8,
+    pub asset_type: u8,
+    pub is_nft: bool,
+    pub asset_id: String,
+}
+/// Response for asset bridging
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BridgeAssetResponse {
+    pub request_id: String,
+    pub transaction_hash: String,
+    pub bridge_fee: String,
+}
+
+/// Request to buy an NFT
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BuyNftRequest {
+    pub listing_id: u64,
+}
+
+/// Request to create an auction
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateAuctionRequest {
+    pub listing_id: u64,
+    pub duration: u64, // Duration in seconds
+    pub reserve_price: String, // Reserve price in wei as string
+}
+
+/// Request to list an NFT for auction
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ListNftForAuctionRequest {
+    pub listing_id: u64,
+    pub is_nft: bool, // true for NFT, false for non-NFT
+}
+
+/// Response for listing an NFT for auction
+#[derive(Debug, Serialize)]
+pub struct ListNftForAuctionResponse {
+    pub listing_id: u64,
+    pub is_nft: bool,
+    pub transaction_hash: Arc<str>,
+    pub block_number: u64,
+}
+
+// ============ LISTING MODELS ============
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct NftListing {
+    pub id: Uuid,
+    pub listing_id: i64,
+    pub creator_address: String,
+    pub nft_contract: String,
+    pub token_id: i64,
+    pub price: i64,
+    pub description: String,
+    pub active: bool,
+    pub is_auction: bool,
+    pub metadata_uri: Option<String>,
+    pub transaction_hash: String,
+    pub block_number: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct NonNftListing {
+    pub id: Uuid,
+    pub listing_id: i64,
+    pub creator_address: String,
+    pub asset_type: i16,
+    pub asset_id: String,
+    pub price: i64,
+    pub description: String,
+    pub platform: Option<String>,
+    pub identifier: Option<String>,
+    pub metadata_uri: Option<String>,
+    pub verification_proof: Option<String>,
+    pub transaction_hash: String,
+    pub block_number: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct SocialMediaNftListing {
+    pub id: Uuid,
+    pub listing_id: i64,
+    pub creator_address: String,
+    pub token_id: i64,
+    pub price: i64,
+    pub description: String,
+    pub social_media_id: String,
+    pub signature: String,
+    pub active: bool,
+    pub is_auction: bool,
+    pub transaction_hash: String,
+    pub block_number: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ============ NFT MODELS ============

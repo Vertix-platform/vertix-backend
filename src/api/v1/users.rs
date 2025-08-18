@@ -6,13 +6,13 @@ use tracing::info;
 
 use crate::api::dto::{UpdateProfileRequest, UserResponse};
 use crate::api::middleware::AuthenticatedUser;
-use crate::application::services::AuthService;
+use crate::handlers::AppState;
 
 pub async fn profile_handler(
-    State(auth_service): State<AuthService>,
+    State(app_state): State<AppState>,
     authenticated_user: AuthenticatedUser,
 ) -> Result<Json<UserResponse>, String> {
-    let user = auth_service.get_user_profile(authenticated_user.user_id)
+    let user = app_state.auth_service.get_user_profile(authenticated_user.user_id)
         .await
         .map_err(|e| format!("Failed to get profile: {:?}", e))?;
 
@@ -30,7 +30,7 @@ pub async fn profile_handler(
 }
 
 pub async fn update_profile_handler(
-    State(auth_service): State<AuthService>,
+    State(app_state): State<AppState>,
     authenticated_user: AuthenticatedUser,
     Json(request): Json<UpdateProfileRequest>,
 ) -> Result<Json<UserResponse>, String> {
@@ -44,7 +44,7 @@ pub async fn update_profile_handler(
         }
     }
 
-    let user = auth_service.update_user_profile(authenticated_user.user_id, request)
+    let user = app_state.auth_service.update_user_profile(authenticated_user.user_id, request)
         .await
         .map_err(|e| format!("Profile update failed: {:?}", e))?;
 
@@ -59,4 +59,4 @@ pub async fn update_profile_handler(
         is_verified: user.is_verified,
         created_at: user.created_at,
     }))
-} 
+}

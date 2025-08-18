@@ -34,9 +34,11 @@ ethers = {version = "2.0.14", features = ["legacy", "abigen"] }
 hex = "0.4.3"
 redis = "0.21"
 dns-lookup = "1.0"
+trust-dns-resolver = "0.23.0"
 argon2 = "0.5.3"
 thiserror = "2.0.12"
 async-trait = "0.1.74"
 urlencoding = "2.1" # For URL encoding in OAuth flows
 backtrace = "0.3" # For debugging panics
 alloy = { version = "1.0.18", features = ["full"] }
+regex = "1.10.2" # Regular expressions for validation

@@ -18,6 +18,14 @@ pub fn load_marketplace_core_abi() -> Result<Abi, ContractError> {
     load_abi("marketplacecore_abi.json")
 }
 
+pub fn load_marketplace_storage_abi() -> Result<Abi, ContractError> {
+    load_abi("marketplacestorage_abi.json")
+}
+
+pub fn load_marketplace_proxy_abi() -> Result<Abi, ContractError> {
+    load_abi("marketplaceproxy_abi.json")
+}
+
 pub fn load_marketplace_auctions_abi() -> Result<Abi, ContractError> {
     load_abi("marketplaceauctions_abi.json")
 }
