@@ -42,3 +42,5 @@ urlencoding = "2.1" # For URL encoding in OAuth flows
 backtrace = "0.3" # For debugging panics
 alloy = { version = "1.0.18", features = ["full"] }
 regex = "1.10.2" # Regular expressions for validation
+rand = "0.8.5" # Random number generation
+sha2 = "0.10.8" # SHA-256 hashing

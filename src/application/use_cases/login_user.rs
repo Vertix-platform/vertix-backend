@@ -20,7 +20,7 @@ impl LoginUserUseCase {
         email: &str,
         password: &str,
     ) -> Result<LoginResponse, ServiceError> {
-        // Business logic: Authenticate user and generate token
+        // Business logic: Login user and generate token pair
         self.domain_auth_service.login(email, password).await
     }
 }

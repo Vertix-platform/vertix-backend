@@ -1,15 +1,17 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use sqlx::PgPool;
+use regex;
 use crate::infrastructure::contracts::client::{ContractClient, ReadOnlyContractClient};
 use crate::infrastructure::contracts::config::{get_current_chain_config, get_private_key};
 use crate::infrastructure::contracts::types::ChainConfig;
-// use crate::infrastructure::repositories::{
-//     ListingRepository,
-//     NftListingData,
-//     NonNftListingData,
-//     SocialMediaNftListingData
-// };
+use crate::infrastructure::repositories::{
+    ListingRepository,
+    NftListingData,
+    NonNftListingData,
+    SocialMediaNftListingData,
+    CombinedListingData
+};
 use crate::domain::models::{
     MintNftRequest, MintNftResponse, User,
     ListNonNftAssetRequest, ListNonNftAssetResponse,
@@ -25,6 +27,15 @@ use crate::domain::models::{
     RefundRequest, RefundResponse, Escrow,
     // NftListing, NonNftListing, SocialMediaNftListing,
 };
+
+// Marketplace statistics
+#[derive(Debug, Clone)]
+pub struct MarketplaceStats {
+    pub total_active_listings: u64,
+    pub nft_listings: u64,
+    pub non_nft_listings: u64,
+    pub social_media_nft_listings: u64,
+}
 use crate::domain::services::ContractError;
 use crate::infrastructure::contracts::utils::verification::VerificationService;
 use crate::api::v1::contracts::ListSocialMediaNftApiRequest;
@@ -34,13 +45,13 @@ use crate::domain::models::Collection;
 pub struct ContractService {
     client: Arc<RwLock<ContractClient>>,
     chain_config: ChainConfig,
-    // listing_repository: ListingRepository,
+    listing_repository: ListingRepository,
 }
 
 pub struct ReadOnlyContractService {
     client: Arc<RwLock<ReadOnlyContractClient>>,
     chain_config: ChainConfig,
-    // listing_repository: ListingRepository,
+    listing_repository: ListingRepository,
 }
 
 impl ContractService {
@@ -49,7 +60,7 @@ impl ContractService {
         rpc_url: String,
         private_key: String,
         chain_id: u64,
-        _db_pool: PgPool,
+        db_pool: PgPool,
     ) -> Result<Self, ContractError> {
         // Get current chain configuration
         let chain_config = get_current_chain_config()?;
@@ -76,7 +87,7 @@ impl ContractService {
         Ok(Self {
             client: Arc::new(RwLock::new(client)),
             chain_config,
-            // listing_repository: ListingRepository::new(db_pool),
+            listing_repository: ListingRepository::new(db_pool),
         })
     }
 
@@ -84,17 +95,17 @@ impl ContractService {
     pub async fn new_with_auto_private_key(
         rpc_url: String,
         chain_id: u64,
-        _db_pool: PgPool,
+        db_pool: PgPool,
     ) -> Result<Self, ContractError> {
         let private_key = get_private_key()?;
-        Self::new(rpc_url, private_key, chain_id, _db_pool).await
+        Self::new(rpc_url, private_key, chain_id, db_pool).await
     }
 
     /// Create a read-only contract service for view functions
     pub async fn new_read_only(
         rpc_url: String,
         chain_id: u64,
-        _db_pool: PgPool,
+        db_pool: PgPool,
     ) -> Result<ReadOnlyContractService, ContractError> {
         // Get current chain configuration
         let chain_config = get_current_chain_config()?;
@@ -116,7 +127,7 @@ impl ContractService {
         Ok(ReadOnlyContractService {
             client: Arc::new(RwLock::new(client)),
             chain_config,
-            // listing_repository: ListingRepository::new(db_pool),
+            listing_repository: ListingRepository::new(db_pool),
         })
     }
 
@@ -280,26 +291,26 @@ impl ContractService {
         let client = self.client.read().await;
         let response = client.list_nft(request.clone()).await?;
 
-        // // Store listing in database
-        // let db_listing = NftListingData {
-        //     id: uuid::Uuid::new_v4(),
-        //     listing_id: response.listing_id as i64,
-        //     creator_address: response.creator.to_string(),
-        //     nft_contract: request.nft_contract.to_string(),
-        //     token_id: request.token_id as i64,
-        //     price: request.price as i64,
-        //     description: request.description.to_string(),
-        //     active: response.active,
-        //     is_auction: response.is_auction,
-        //     metadata_uri: None, // Could be added later if needed
-        //     transaction_hash: response.transaction_hash.clone(),
-        //     block_number: response.block_number as i64,
-        //     created_at: sqlx::types::chrono::Utc::now(),
-        //     updated_at: sqlx::types::chrono::Utc::now(),
-        // };
+        // Store listing in database
+        let db_listing = NftListingData {
+            id: uuid::Uuid::new_v4(),
+            listing_id: response.listing_id as i64,
+            creator_address: response.creator.to_string(),
+            nft_contract: request.nft_contract.to_string(),
+            token_id: request.token_id as i64,
+            price: request.price as i64,
+            description: request.description.to_string(),
+            active: response.active,
+            is_auction: response.is_auction,
+            metadata_uri: None, // Could be added later if needed
+            transaction_hash: response.transaction_hash.clone(),
+            block_number: response.block_number as i64,
+            created_at: sqlx::types::chrono::Utc::now(),
+            updated_at: sqlx::types::chrono::Utc::now(),
+        };
 
-        // self.listing_repository.create_nft_listing(&db_listing).await
-        //     .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
+        self.listing_repository.create_nft_listing(&db_listing).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
 
         Ok(response)
     }
@@ -331,29 +342,29 @@ impl ContractService {
         let response = client.list_non_nft_asset(request.clone()).await?;
 
         // Parse asset identifier to extract platform and identifier
-        // let (platform, identifier) = self.parse_asset_identifier(&request.asset_id, request.asset_type)?;
+        let (platform, identifier) = self.parse_asset_identifier(&request.asset_id, request.asset_type)?;
 
-        // // Store listing in database
-        // let db_listing = NonNftListingData {
-        //     id: uuid::Uuid::new_v4(),
-        //     listing_id: response.listing_id as i64,
-        //     creator_address: response.creator.to_string(),
-        //     asset_type: request.asset_type as i16,
-        //     asset_id: request.asset_id.to_string(),
-        //     price: request.price as i64,
-        //     description: request.description.to_string(),
-        //     platform: Some(platform),
-        //     identifier: Some(identifier),
-        //     metadata_uri: Some(response.metadata.to_string()),
-        //     verification_proof: Some(response.verification_proof.to_string()),
-        //     transaction_hash: response.transaction_hash.to_string(),
-        //     block_number: response.block_number as i64,
-        //     created_at: sqlx::types::chrono::Utc::now(),
-        //     updated_at: sqlx::types::chrono::Utc::now(),
-        // };
+        // Store listing in database
+        let db_listing = NonNftListingData {
+            id: uuid::Uuid::new_v4(),
+            listing_id: response.listing_id as i64,
+            creator_address: response.creator.to_string(),
+            asset_type: request.asset_type as i16,
+            asset_id: request.asset_id.to_string(),
+            price: request.price as i64,
+            description: request.description.to_string(),
+            platform: Some(platform),
+            identifier: Some(identifier),
+            metadata_uri: Some(response.metadata.to_string()),
+            verification_proof: Some(response.verification_proof.to_string()),
+            transaction_hash: response.transaction_hash.to_string(),
+            block_number: response.block_number as i64,
+            created_at: sqlx::types::chrono::Utc::now(),
+            updated_at: sqlx::types::chrono::Utc::now(),
+        };
 
-        // self.listing_repository.create_non_nft_listing(&db_listing).await
-        //     .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
+        self.listing_repository.create_non_nft_listing(&db_listing).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
 
         Ok(response)
     }
@@ -439,9 +450,9 @@ impl ContractService {
         let internal_request = ListSocialMediaNftRequest {
             token_id: request.token_id,
             price,
-            social_media_id: request.social_media_id.into(),
-            signature: signature.into(),
-            description: request.description.into(),
+            social_media_id: request.social_media_id.clone().into(),
+            signature: signature.clone().into(),
+            description: request.description.clone().into(),
         };
 
         // Call the client to list social media NFT
@@ -449,25 +460,25 @@ impl ContractService {
         let response = client.list_social_media_nft(internal_request).await?;
 
         // // Store listing in database
-        // let db_listing = SocialMediaNftListingData {
-        //     id: uuid::Uuid::new_v4(),
-        //     listing_id: response.listing_id as i64,
-        //     creator_address: response.creator.to_string(),
-        //     token_id: request.token_id as i64,
-        //     price: request.price as i64,
-        //     description: request.description.to_string(),
-        //     social_media_id: request.social_media_id.to_string(),
-        //     signature: request.signature.to_string(),
-        //     active: response.active,
-        //     is_auction: response.is_auction,
-        //     transaction_hash: response.transaction_hash.clone(),
-        //     block_number: response.block_number as i64,
-        //     created_at: sqlx::types::chrono::Utc::now(),
-        //     updated_at: sqlx::types::chrono::Utc::now(),
-        // };
+        let db_listing = SocialMediaNftListingData {
+            id: uuid::Uuid::new_v4(),
+            listing_id: response.listing_id as i64,
+            creator_address: response.creator.to_string(),
+            token_id: request.token_id as i64,
+            price: request.price.parse::<i64>().unwrap_or(0),
+            description: request.description.to_string(),
+            social_media_id: request.social_media_id.to_string(),
+            signature: signature.to_string(),
+            active: response.active,
+            is_auction: response.is_auction,
+            transaction_hash: response.transaction_hash.clone(),
+            block_number: response.block_number as i64,
+            created_at: sqlx::types::chrono::Utc::now(),
+            updated_at: sqlx::types::chrono::Utc::now(),
+        };
 
-        // self.listing_repository.create_social_media_nft_listing(&db_listing).await
-        //     .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
+        self.listing_repository.create_social_media_nft_listing(&db_listing).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
 
         Ok(response)
     }
@@ -616,6 +627,24 @@ impl ContractService {
         read_only_client.get_nft_listing(listing_id).await
     }
 
+    /// Get NFT listing from database with full details
+    pub async fn get_nft_listing_details(&self, listing_id: u64) -> Result<Option<NftListingData>, ContractError> {
+        self.listing_repository.get_nft_listing(listing_id as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get active NFT listings with pagination
+    pub async fn get_active_nft_listings(&self, limit: u64, offset: u64) -> Result<Vec<NftListingData>, ContractError> {
+        self.listing_repository.get_active_nft_listings(limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Search NFT listings by description
+    pub async fn search_nft_listings(&self, query: &str, limit: u64, offset: u64) -> Result<Vec<NftListingData>, ContractError> {
+        self.listing_repository.search_nft_listings(query, limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
     /// Get non-NFT listing details
     pub async fn get_non_nft_listing(&self, listing_id: u64) -> Result<(String, u64, u8, bool, u8, String, String), ContractError> {
         let client = self.client.read().await;
@@ -624,6 +653,90 @@ impl ContractService {
             client.get_network_config().clone(),
         ).await?;
         read_only_client.get_non_nft_listing(listing_id).await
+    }
+
+    /// Get non-NFT listing from database with full details
+    pub async fn get_non_nft_listing_details(&self, listing_id: u64) -> Result<Option<NonNftListingData>, ContractError> {
+        self.listing_repository.get_non_nft_listing(listing_id as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get active non-NFT listings with pagination
+    pub async fn get_active_non_nft_listings(&self, limit: u64, offset: u64) -> Result<Vec<NonNftListingData>, ContractError> {
+        self.listing_repository.get_active_non_nft_listings(limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get non-NFT listings by asset type
+    pub async fn get_non_nft_listings_by_asset_type(&self, asset_type: u8, limit: u64, offset: u64) -> Result<Vec<NonNftListingData>, ContractError> {
+        self.listing_repository.get_non_nft_listings_by_asset_type(asset_type as i16, limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Search non-NFT listings by description
+    pub async fn search_non_nft_listings(&self, query: &str, limit: u64, offset: u64) -> Result<Vec<NonNftListingData>, ContractError> {
+        self.listing_repository.search_non_nft_listings(query, limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get social media NFT listing from database with full details
+    pub async fn get_social_media_nft_listing_details(&self, listing_id: u64) -> Result<Option<SocialMediaNftListingData>, ContractError> {
+        self.listing_repository.get_social_media_nft_listing(listing_id as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get active social media NFT listings with pagination
+    pub async fn get_active_social_media_nft_listings(&self, limit: u64, offset: u64) -> Result<Vec<SocialMediaNftListingData>, ContractError> {
+        self.listing_repository.get_active_social_media_nft_listings(limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get all listings by creator address (combined across all types)
+    pub async fn get_listings_by_creator(&self, creator_address: &str, limit: u64, offset: u64) -> Result<Vec<CombinedListingData>, ContractError> {
+        self.listing_repository.get_listings_by_creator(creator_address, limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get total count of listings by creator
+    pub async fn get_listing_count_by_creator(&self, creator_address: &str) -> Result<u64, ContractError> {
+        let count = self.listing_repository.get_listing_count_by_creator(creator_address).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?;
+        Ok(count as u64)
+    }
+
+    /// Get listings by price range (combined across all types)
+    pub async fn get_listings_by_price_range(&self, min_price: u64, max_price: u64, limit: u64, offset: u64) -> Result<Vec<CombinedListingData>, ContractError> {
+        self.listing_repository.get_listings_by_price_range(min_price as i64, max_price as i64, limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Search across all listing types
+    pub async fn search_all_listings(&self, query: &str, limit: u64, offset: u64) -> Result<Vec<CombinedListingData>, ContractError> {
+        self.listing_repository.search_all_listings(query, limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get marketplace statistics
+    pub async fn get_marketplace_stats(&self) -> Result<MarketplaceStats, ContractError> {
+        // Get counts from database
+        let nft_count = self.listing_repository.get_active_nft_listings(1, 0).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?
+            .len() as u64;
+
+        let non_nft_count = self.listing_repository.get_active_non_nft_listings(1, 0).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?
+            .len() as u64;
+
+        let social_media_count = self.listing_repository.get_active_social_media_nft_listings(1, 0).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?
+            .len() as u64;
+
+        Ok(MarketplaceStats {
+            total_active_listings: nft_count + non_nft_count + social_media_count,
+            nft_listings: nft_count,
+            non_nft_listings: non_nft_count,
+            social_media_nft_listings: social_media_count,
+        })
     }
 
     /// Get all collections
@@ -677,6 +790,153 @@ impl ContractService {
         let _client = self.client.read().await;
         // This would need to be implemented in the client
         true // For now, assume connected
+    }
+
+    /// Parse asset identifier to extract platform and identifier
+    fn parse_asset_identifier(&self, asset_id: &str, asset_type: u8) -> Result<(String, String), ContractError> {
+        // First convert asset_type to string representation
+        let asset_type_str = match asset_type {
+            1 => "social_media",
+            2 => "domain",
+            3 => "app",
+            4 => "website",
+            5 => "youtube",
+            6 => "other",
+            _ => return Err(ContractError::ContractCallError(format!("Invalid asset type: {}", asset_type))),
+        };
+
+        // Parse based on asset type
+        match asset_type_str {
+            "social_media" => self.parse_social_media_identifier(asset_id),
+            "website" => self.parse_website_identifier(asset_id),
+            "domain" => self.parse_domain_identifier(asset_id),
+            "youtube" => self.parse_youtube_identifier(asset_id),
+            "app" => self.parse_app_identifier(asset_id),
+            _ => Ok(("unknown".to_string(), asset_id.to_string())),
+        }
+    }
+
+    /// Parse social media identifier (username or URL)
+    fn parse_social_media_identifier(&self, asset_id: &str) -> Result<(String, String), ContractError> {
+        // Handle URLs like https://x.com/username
+        // Special handling for YouTube channel URLs
+        if asset_id.contains("youtube.com/channel/") {
+            let channel_pattern = regex::Regex::new(r"https?://(?:www\.)?youtube\.com/channel/([^/\s?]+)").unwrap();
+            if let Some(captures) = channel_pattern.captures(asset_id) {
+                let channel_id = captures.get(1).unwrap().as_str();
+                return Ok(("youtube".to_string(), channel_id.to_string()));
+            }
+        }
+
+        // Handle other social media URLs
+        let url_pattern = regex::Regex::new(r"https?://(?:www\.)?(x\.com|instagram\.com|facebook\.com|youtube\.com|youtu\.be)/([^/\s?]+)").unwrap();
+
+        if let Some(captures) = url_pattern.captures(asset_id) {
+            let domain = captures.get(1).unwrap().as_str();
+            let username = captures.get(2).unwrap().as_str();
+
+            let platform = match domain {
+                "x.com" => "x",
+                "instagram.com" => "instagram",
+                "facebook.com" => "facebook",
+                "youtube.com" | "youtu.be" => "youtube",
+                _ => return Err(ContractError::ContractCallError(format!("Unsupported social media platform: {}", domain))),
+            };
+
+            return Ok((platform.to_string(), username.to_string()));
+        }
+
+        // Handle direct usernames (require platform specification)
+        if !asset_id.contains('/') && !asset_id.contains('.') {
+            return Err(ContractError::ContractCallError("Platform must be specified for social media identifiers. Use format: platform/username (e.g., x/username, instagram/username)".to_string()));
+        }
+
+        Err(ContractError::ContractCallError(format!("Invalid social media identifier format: {}", asset_id)))
+    }
+
+    /// Parse website identifier
+    fn parse_website_identifier(&self, asset_id: &str) -> Result<(String, String), ContractError> {
+        // Remove protocol and www if present
+        let clean_url = asset_id
+            .replace("https://", "")
+            .replace("http://", "")
+            .replace("www.", "");
+
+        Ok(("website".to_string(), clean_url))
+    }
+
+    /// Parse domain identifier
+    fn parse_domain_identifier(&self, asset_id: &str) -> Result<(String, String), ContractError> {
+        // Remove protocol if present
+        let clean_domain = asset_id
+            .replace("https://", "")
+            .replace("http://", "");
+
+        Ok(("domain".to_string(), clean_domain))
+    }
+
+    /// Parse YouTube identifier
+    fn parse_youtube_identifier(&self, asset_id: &str) -> Result<(String, String), ContractError> {
+        // Handle YouTube channel URLs
+        if asset_id.contains("youtube.com/channel/") {
+            let channel_pattern = regex::Regex::new(r"https?://(?:www\.)?youtube\.com/channel/([^/\s?]+)").unwrap();
+            if let Some(captures) = channel_pattern.captures(asset_id) {
+                let channel_id = captures.get(1).unwrap().as_str();
+                return Ok(("youtube".to_string(), channel_id.to_string()));
+            }
+        }
+
+        // Handle YouTube user URLs
+        if asset_id.contains("youtube.com/user/") {
+            let user_pattern = regex::Regex::new(r"https?://(?:www\.)?youtube\.com/user/([^/\s?]+)").unwrap();
+            if let Some(captures) = user_pattern.captures(asset_id) {
+                let username = captures.get(1).unwrap().as_str();
+                return Ok(("youtube".to_string(), username.to_string()));
+            }
+        }
+
+        // Handle YouTube @username URLs
+        if asset_id.contains("youtube.com/@") {
+            let at_pattern = regex::Regex::new(r"https?://(?:www\.)?youtube\.com/@([^/\s?]+)").unwrap();
+            if let Some(captures) = at_pattern.captures(asset_id) {
+                let username = captures.get(1).unwrap().as_str();
+                return Ok(("youtube".to_string(), username.to_string()));
+            }
+        }
+
+        // Handle direct YouTube identifiers
+        if !asset_id.contains("youtube.com") && !asset_id.contains("youtu.be") {
+            return Ok(("youtube".to_string(), asset_id.to_string()));
+        }
+
+        Err(ContractError::ContractCallError(format!("Invalid YouTube identifier format: {}", asset_id)))
+    }
+
+    /// Parse app identifier
+    fn parse_app_identifier(&self, asset_id: &str) -> Result<(String, String), ContractError> {
+        // Handle app store URLs
+        if asset_id.contains("apps.apple.com") {
+            let app_pattern = regex::Regex::new(r"https?://(?:www\.)?apps\.apple\.com/[^/]+/app/[^/]+/id(\d+)").unwrap();
+            if let Some(captures) = app_pattern.captures(asset_id) {
+                let app_id = captures.get(1).unwrap().as_str();
+                return Ok(("ios".to_string(), app_id.to_string()));
+            }
+        }
+
+        if asset_id.contains("play.google.com") {
+            let app_pattern = regex::Regex::new(r"https?://(?:www\.)?play\.google\.com/store/apps/details\?id=([^&\s]+)").unwrap();
+            if let Some(captures) = app_pattern.captures(asset_id) {
+                let app_id = captures.get(1).unwrap().as_str();
+                return Ok(("android".to_string(), app_id.to_string()));
+            }
+        }
+
+        // Handle direct app identifiers
+        if !asset_id.contains("apps.apple.com") && !asset_id.contains("play.google.com") {
+            return Ok(("app".to_string(), asset_id.to_string()));
+        }
+
+        Err(ContractError::ContractCallError(format!("Invalid app identifier format: {}", asset_id)))
     }
 
     /// List an NFT for auction
@@ -788,5 +1048,53 @@ impl ReadOnlyContractService {
 
     pub fn get_network_config(&self) -> &ChainConfig {
         &self.chain_config
+    }
+
+    // Read-only listing operations
+    /// Get active NFT listings with pagination
+    pub async fn get_active_nft_listings(&self, limit: u64, offset: u64) -> Result<Vec<NftListingData>, ContractError> {
+        self.listing_repository.get_active_nft_listings(limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get active non-NFT listings with pagination
+    pub async fn get_active_non_nft_listings(&self, limit: u64, offset: u64) -> Result<Vec<NonNftListingData>, ContractError> {
+        self.listing_repository.get_active_non_nft_listings(limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get active social media NFT listings with pagination
+    pub async fn get_active_social_media_nft_listings(&self, limit: u64, offset: u64) -> Result<Vec<SocialMediaNftListingData>, ContractError> {
+        self.listing_repository.get_active_social_media_nft_listings(limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Search across all listing types
+    pub async fn search_all_listings(&self, query: &str, limit: u64, offset: u64) -> Result<Vec<CombinedListingData>, ContractError> {
+        self.listing_repository.search_all_listings(query, limit as i64, offset as i64).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))
+    }
+
+    /// Get marketplace statistics
+    pub async fn get_marketplace_stats(&self) -> Result<MarketplaceStats, ContractError> {
+        // Get counts from database
+        let nft_count = self.listing_repository.get_active_nft_listings(1, 0).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?
+            .len() as u64;
+
+        let non_nft_count = self.listing_repository.get_active_non_nft_listings(1, 0).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?
+            .len() as u64;
+
+        let social_media_count = self.listing_repository.get_active_social_media_nft_listings(1, 0).await
+            .map_err(|e| ContractError::DatabaseError(e.to_string()))?
+            .len() as u64;
+
+        Ok(MarketplaceStats {
+            total_active_listings: nft_count + non_nft_count + social_media_count,
+            nft_listings: nft_count,
+            non_nft_listings: non_nft_count,
+            social_media_nft_listings: social_media_count,
+        })
     }
 }

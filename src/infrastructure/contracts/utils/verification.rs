@@ -77,7 +77,7 @@ impl VerificationService {
         let mut headers = reqwest::header::HeaderMap::new();
         let auth_value = format!("Bearer {}", self.pinata_jwt);
         headers.insert(
-            reqwest::header::AUTHORIZATION, 
+            reqwest::header::AUTHORIZATION,
             reqwest::header::HeaderValue::from_str(&auth_value)
                 .map_err(|e| ContractError::ContractCallError(format!("Invalid auth header: {}", e)))?
         );

@@ -14,11 +14,12 @@ use sqlx::PgPool;
 use thiserror::Error;
 use uuid::Uuid;
 use std::env;
+use rand::Rng;
+use chrono::{Duration, Utc};
 
-
-use crate::api::dto::LoginResponse;
-use crate::domain::{User, ConnectWalletRequest, UpdateProfileRequest};
-use crate::infrastructure::repositories::UserRepository;
+use crate::api::dto::{LoginResponse, RefreshTokenResponse};
+use crate::domain::{User, ConnectWalletRequest, UpdateProfileRequest, TokenPair};
+use crate::infrastructure::repositories::{UserRepository, RefreshTokenRepository};
 
 // Social Media OAuth Types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,24 +64,42 @@ pub struct OAuthConfig {
 pub struct Claims {
     sub: String, // User ID
     exp: usize,  // Expiration timestamp
+    iat: usize,  // Issued at timestamp
+    jti: String, // JWT ID for token tracking
 }
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
-    #[error("Argon2 error: {0}")]
-    Argon2Error(String),
+    #[error("Invalid credentials")]
+    InvalidCredentials,
+    #[error("User not found")]
+    UserNotFound,
+    #[error("User already exists")]
+    UserAlreadyExists,
+    #[error("Invalid wallet address")]
+    InvalidWalletAddress,
+    #[error("Invalid signature")]
+    InvalidSignature,
+    #[error("Invalid nonce")]
+    InvalidNonce,
     #[error("JWT error: {0}")]
     JwtError(#[from] jsonwebtoken::errors::Error),
     #[error("Database error: {0}")]
     DatabaseError(#[from] sqlx::Error),
-    #[error("Invalid credentials")]
-    InvalidCredentials,
+    #[error("Argon2 error: {0}")]
+    Argon2Error(String),
     #[error("OAuth error: {0}")]
     OAuthError(String),
-    #[error("Invalid signature")]
-    InvalidSignature,
-    #[error("Invalid wallet address")]
-    InvalidWalletAddress,
+    #[error("Invalid refresh token")]
+    InvalidRefreshToken,
+    #[error("Refresh token expired")]
+    RefreshTokenExpired,
+    #[error("Refresh token revoked")]
+    RefreshTokenRevoked,
+    #[error("Token family compromised")]
+    TokenFamilyCompromised,
+    #[error("Too many active sessions")]
+    TooManyActiveSessions,
 }
 
 // ============ CONTRACT ERROR TYPES ============
@@ -131,12 +150,14 @@ impl From<ethers::contract::AbiError> for ContractError {
 
 pub struct AuthService {
     user_repo: UserRepository,
+    refresh_token_repo: RefreshTokenRepository,
 }
 
 impl AuthService {
     pub fn new(pool: PgPool) -> Self {
         Self {
-            user_repo: UserRepository::new(pool),
+            user_repo: UserRepository::new(pool.clone()),
+            refresh_token_repo: RefreshTokenRepository::new(pool),
         }
     }
 
@@ -146,10 +167,17 @@ impl AuthService {
         password: &str,
         first_name: &str,
         last_name: &str,
-    ) -> Result<User, ServiceError> {
+    ) -> Result<LoginResponse, ServiceError> {
         let password_hash = self.hash_password(password)?;
         let user = self.user_repo.create_user(email, &password_hash, first_name, last_name).await?;
-        Ok(user)
+        let token_pair = self.generate_token_pair(&user.id.to_string()).await?;
+        
+        Ok(LoginResponse {
+            access_token: token_pair.access_token,
+            refresh_token: token_pair.refresh_token,
+            token_type: token_pair.token_type,
+            expires_in: token_pair.expires_in,
+        })
     }
 
     pub async fn login(
@@ -168,8 +196,67 @@ impl AuthService {
             return Err(ServiceError::InvalidCredentials); // Google-only user
         }
 
-        let token = self.generate_jwt(&user.id.to_string())?;
-        Ok(LoginResponse { token })
+        let token_pair = self.generate_token_pair(&user.id.to_string()).await?;
+        
+        Ok(LoginResponse {
+            access_token: token_pair.access_token,
+            refresh_token: token_pair.refresh_token,
+            token_type: token_pair.token_type,
+            expires_in: token_pair.expires_in,
+        })
+    }
+
+    pub async fn refresh_token(&self, refresh_token: &str) -> Result<RefreshTokenResponse, ServiceError> {
+        // Hash the provided refresh token
+        let token_hash = self.refresh_token_repo.hash_token(refresh_token);
+        
+        // Find the refresh token in the database
+        let stored_token = self.refresh_token_repo.find_by_token_hash(&token_hash).await?
+            .ok_or(ServiceError::InvalidRefreshToken)?;
+
+        // Check if token is expired
+        if stored_token.expires_at < Utc::now() {
+            return Err(ServiceError::RefreshTokenExpired);
+        }
+
+        // Check if token is revoked
+        if stored_token.revoked_at.is_some() {
+            return Err(ServiceError::RefreshTokenRevoked);
+        }
+
+        // Check for token family compromise (multiple tokens in same family)
+        let family_tokens = self.refresh_token_repo.find_by_family_id(stored_token.family_id).await?;
+        if family_tokens.len() > 1 {
+            // Revoke entire family if compromised
+            self.refresh_token_repo.revoke_family(stored_token.family_id).await?;
+            return Err(ServiceError::TokenFamilyCompromised);
+        }
+
+        // Revoke the current refresh token
+        self.refresh_token_repo.revoke_token(&token_hash).await?;
+
+        // Generate new token pair
+        let token_pair = self.generate_token_pair(&stored_token.user_id.to_string()).await?;
+
+        Ok(RefreshTokenResponse {
+            access_token: token_pair.access_token,
+            refresh_token: token_pair.refresh_token,
+            token_type: token_pair.token_type,
+            expires_in: token_pair.expires_in,
+        })
+    }
+
+    pub async fn revoke_token(&self, refresh_token: &str) -> Result<(), ServiceError> {
+        let token_hash = self.refresh_token_repo.hash_token(refresh_token);
+        self.refresh_token_repo.revoke_token(&token_hash).await?;
+        Ok(())
+    }
+
+    pub async fn revoke_all_user_tokens(&self, user_id: &str) -> Result<(), ServiceError> {
+        let user_uuid = Uuid::parse_str(user_id)
+            .map_err(|_| ServiceError::InvalidCredentials)?;
+        self.refresh_token_repo.revoke_user_tokens(user_uuid).await?;
+        Ok(())
     }
 
     pub fn hash_password(&self, password: &str) -> Result<String, ServiceError> {
@@ -190,20 +277,54 @@ impl AuthService {
             .is_ok())
     }
 
-    pub fn generate_jwt(&self, user_id: &str) -> Result<String, ServiceError> {
-        Self::generate_jwt_static(user_id)
+    pub async fn generate_token_pair(&self, user_id: &str) -> Result<TokenPair, ServiceError> {
+        // Check active session limit (max 5 active sessions per user)
+        let user_uuid = Uuid::parse_str(user_id)
+            .map_err(|_| ServiceError::InvalidCredentials)?;
+        let active_count = self.refresh_token_repo.get_active_token_count(user_uuid).await?;
+        if active_count >= 5 {
+            return Err(ServiceError::TooManyActiveSessions);
+        }
+
+        // Generate access token (short-lived: 15 minutes)
+        let access_token = self.generate_access_token(user_id)?;
+        
+        // Generate refresh token (long-lived: 30 days)
+        let refresh_token = self.generate_refresh_token()?;
+        let family_id = Uuid::new_v4();
+        
+        // Store refresh token in database
+        let expires_at = Utc::now() + Duration::days(30);
+        self.refresh_token_repo.create_refresh_token(
+            user_uuid,
+            &refresh_token,
+            expires_at,
+            family_id,
+        ).await?;
+
+        Ok(TokenPair {
+            access_token,
+            refresh_token,
+            token_type: "Bearer".to_string(),
+            expires_in: 15 * 60, // 15 minutes in seconds
+        })
     }
 
-    pub fn generate_jwt_static(user_id: &str) -> Result<String, ServiceError> {
+    pub fn generate_access_token(&self, user_id: &str) -> Result<String, ServiceError> {
+        Self::generate_access_token_static(user_id)
+    }
+
+    pub fn generate_access_token_static(user_id: &str) -> Result<String, ServiceError> {
         let secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set");
-        let expiration = chrono::Utc::now()
-            .checked_add_signed(chrono::Duration::hours(24))
-            .expect("valid timestamp")
-            .timestamp() as usize;
+        let now = Utc::now();
+        let expiration = now + Duration::minutes(15); // 15 minutes
+        let jti = Uuid::new_v4().to_string();
 
         let claims = Claims {
             sub: user_id.to_string(),
-            exp: expiration,
+            exp: expiration.timestamp() as usize,
+            iat: now.timestamp() as usize,
+            jti,
         };
 
         let token = encode(
@@ -212,6 +333,13 @@ impl AuthService {
             &EncodingKey::from_secret(secret.as_ref()),
         )?;
         Ok(token)
+    }
+
+    fn generate_refresh_token(&self) -> Result<String, ServiceError> {
+        let mut rng = rand::thread_rng();
+        let mut bytes = [0u8; 32];
+        rng.fill(&mut bytes);
+        Ok(hex::encode(bytes))
     }
 
     pub fn verify_jwt(&self, token: &str) -> Result<String, ServiceError> {
@@ -352,8 +480,13 @@ impl AuthService {
             None => self.user_repo.create_google_user(email, google_id, first_name, last_name).await?,
         };
 
-        let token = self.generate_jwt(&user.id.to_string())?;
-        Ok(LoginResponse { token })
+        let token_pair = self.generate_token_pair(&user.id.to_string()).await?;
+        Ok(LoginResponse {
+            access_token: token_pair.access_token,
+            refresh_token: token_pair.refresh_token,
+            token_type: token_pair.token_type,
+            expires_in: token_pair.expires_in,
+        })
     }
 
     // Social Media OAuth Implementation

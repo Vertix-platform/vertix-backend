@@ -10,14 +10,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     extract_abis("../abis", "contracts/out")?;
 
     // Extract addresses for each network
-    let networks = vec!["anvil", "base_sepolia", "polygon_mumbai"];
+    let networks = vec!["anvil", "base_sepolia", "polygon_zkevm_testnet"];
 
     for network in networks {
         let broadcast_dir = format!("contracts/broadcast/DeployVertix.s.sol/{}",
             match network {
                 "anvil" => "31337",
                 "base_sepolia" => "84532",
-                "polygon_mumbai" => "80001",
+                "polygon_zkevm_testnet" => "2442",
                 _ => "31337"
             }
         );
@@ -79,7 +79,7 @@ fn extract_addresses(broadcast_dir: &str, addresses_dir: &str, network_name: &st
         let network_arg = match network_name {
             "anvil" => "--network anvil",
             "base_sepolia" => "--network base-testnet",
-            "polygon_mumbai" => "--network polygon-testnet",
+            "polygon_zkevm_testnet" => "--network polygon-zkevm-testnet",
             _ => "--network anvil"
         };
 

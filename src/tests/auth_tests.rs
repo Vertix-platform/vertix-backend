@@ -1,7 +1,5 @@
-use crate::domain::models::{User, MintNftRequest};
+use crate::domain::models::{MintNftRequest};
 use crate::application::services::contract_service::ContractService;
-use uuid::Uuid;
-use sqlx::types::chrono::Utc;
 use std::sync::Arc;
 use sqlx::PgPool;
 

@@ -15,10 +15,9 @@ pub fn get_current_chain_config() -> Result<ChainConfig, ContractError> {
     match chain_id {
         137 => get_polygon_mainnet_config(),
         8453 => get_base_mainnet_config(),
-        80001 => get_polygon_mumbai_config(),
         84532 => get_base_sepolia_config(),
         1101 => get_polygon_zkevm_mainnet_config(),
-        1442 => get_polygon_zkevm_testnet_config(),
+        2442 => get_polygon_zkevm_testnet_config(),
         31337 => get_anvil_config(),
         _ => get_anvil_config(), // Default to Anvil for unknown chains
     }
@@ -29,7 +28,6 @@ pub fn get_supported_chains() -> Result<Vec<ChainConfig>, ContractError> {
     let mut chains = Vec::new();
 
     chains.push(get_anvil_config()?);
-    chains.push(get_polygon_mumbai_config()?);
     chains.push(get_base_sepolia_config()?);
     chains.push(get_polygon_zkevm_testnet_config()?);
     chains.push(get_polygon_mainnet_config()?);
@@ -71,30 +69,6 @@ fn get_anvil_config() -> Result<ChainConfig, ContractError> {
             block_time_seconds: 1,
         },
         contract_addresses: get_anvil_contract_addresses()?,
-    })
-}
-
-/// Polygon Mumbai testnet configuration
-fn get_polygon_mumbai_config() -> Result<ChainConfig, ContractError> {
-    Ok(ChainConfig {
-        chain_id: 80001,
-        chain_type: ChainType::Polygon,
-        name: "Polygon Mumbai".to_string(),
-        rpc_url: std::env::var("POLYGON_MUMBAI_RPC_URL").unwrap_or_else(|_| "https://rpc-mumbai.maticvigil.com".to_string()),
-        ws_url: None,
-        explorer_url: "https://mumbai.polygonscan.com".to_string(),
-        native_currency: NativeCurrency {
-            name: "MATIC".to_string(),
-            symbol: "MATIC".to_string(),
-            decimals: 18,
-        },
-        gas_settings: GasSettings {
-            default_gas_limit: 500000,
-            max_gas_limit: 30000000,
-            gas_price_strategy: GasPriceStrategy::Dynamic,
-            block_time_seconds: 2,
-        },
-        contract_addresses: get_polygon_contract_addresses()?,
     })
 }
 
@@ -197,7 +171,7 @@ fn get_polygon_zkevm_mainnet_config() -> Result<ChainConfig, ContractError> {
 /// Polygon zkEVM testnet configuration
 fn get_polygon_zkevm_testnet_config() -> Result<ChainConfig, ContractError> {
     Ok(ChainConfig {
-        chain_id: 1442,
+        chain_id: 2442,
         chain_type: ChainType::Polygon,
         name: "Polygon zkEVM Testnet".to_string(),
         rpc_url: std::env::var("POLYGON_ZKEVM_TESTNET_RPC_URL").unwrap_or_else(|_| "https://rpc.public.zkevm-test.net".to_string()),

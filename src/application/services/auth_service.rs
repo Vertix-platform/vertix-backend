@@ -1,7 +1,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::api::dto::{LoginResponse, ConnectWalletRequest, UpdateProfileRequest};
+use crate::api::dto::{LoginResponse, ConnectWalletRequest, UpdateProfileRequest, RefreshTokenResponse};
 use crate::domain::{User, ServiceError};
 use crate::application::use_cases::{
     RegisterUserUseCase, LoginUserUseCase, ConnectWalletUseCase,
@@ -38,6 +38,21 @@ impl AuthService {
         use_case.execute(email, password).await
     }
 
+    pub async fn refresh_token(&self, refresh_token: &str) -> Result<RefreshTokenResponse, ServiceError> {
+        let domain_service = crate::domain::services::AuthService::new(self.pool.clone());
+        domain_service.refresh_token(refresh_token).await
+    }
+
+    pub async fn revoke_token(&self, refresh_token: &str) -> Result<(), ServiceError> {
+        let domain_service = crate::domain::services::AuthService::new(self.pool.clone());
+        domain_service.revoke_token(refresh_token).await
+    }
+
+    pub async fn revoke_all_user_tokens(&self, user_id: &str) -> Result<(), ServiceError> {
+        let domain_service = crate::domain::services::AuthService::new(self.pool.clone());
+        domain_service.revoke_all_user_tokens(user_id).await
+    }
+
     pub async fn connect_wallet(
         &self,
         user_id: Option<Uuid>,
@@ -72,7 +87,7 @@ impl AuthService {
     }
 
     pub fn generate_jwt(&self, user_id: &str) -> Result<String, ServiceError> {
-        crate::domain::services::AuthService::generate_jwt_static(user_id)
+        crate::domain::services::AuthService::generate_access_token_static(user_id)
     }
 
     // Static methods that don't need database access

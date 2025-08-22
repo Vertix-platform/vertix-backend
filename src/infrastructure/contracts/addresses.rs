@@ -52,12 +52,12 @@ pub fn load_local_addresses() -> Result<ContractAddresses, ContractError> {
 // Load contract addresses for Polygon network
 pub fn load_polygon_addresses() -> Result<ContractAddresses, ContractError> {
     // Try to load from generated file first
-    if let Ok(addresses) = load_addresses_from_file("src/infrastructure/contracts/addresses/deployed_addresses_polygon_mumbai.json") {
+    if let Ok(addresses) = load_addresses_from_file("src/infrastructure/contracts/addresses/deployed_addresses_polygon_mainnet.json") {
         return convert_json_to_addresses(addresses);
     }
 
     // Fallback to error if no deployment found
-    Err(ContractError::ContractCallError("Polygon Mumbai addresses not found. Run deployment first.".to_string()))
+    Err(ContractError::ContractCallError("Polygon mainnet addresses not found. Run deployment first.".to_string()))
 }
 
 // Load contract addresses for Base network
@@ -131,20 +131,7 @@ pub fn get_local_network_config() -> NetworkConfig {
     }
 }
 
-// Get network configuration for Polygon Mumbai testnet
-pub fn get_polygon_mumbai_network_config() -> NetworkConfig {
-    NetworkConfig {
-        chain_id: 80001,
-        rpc_url: "https://polygon-mumbai-bor.publicnode.com".to_string(),
-        ws_url: None,
-        explorer_url: "https://mumbai.polygonscan.com".to_string(),
-        native_currency: crate::infrastructure::contracts::types::NativeCurrency {
-            name: "Matic".to_string(),
-            symbol: "MATIC".to_string(),
-            decimals: 18,
-        },
-    }
-}
+
 
 // Get network configuration for Polygon mainnet
 pub fn get_polygon_network_config() -> NetworkConfig {
@@ -195,7 +182,6 @@ pub fn get_base_network_config() -> NetworkConfig {
 pub fn get_network_config_by_chain_id(chain_id: u64) -> Result<NetworkConfig, ContractError> {
     match chain_id {
         31337 => Ok(get_local_network_config()),
-        80001 => Ok(get_polygon_mumbai_network_config()), // Polygon Mumbai testnet
         137 => Ok(get_polygon_network_config()), // Polygon mainnet
         84532 => Ok(get_base_sepolia_network_config()), // Base Sepolia testnet
         8453 => Ok(get_base_network_config()), // Base mainnet
@@ -207,12 +193,11 @@ pub fn get_network_config_by_chain_id(chain_id: u64) -> Result<NetworkConfig, Co
 pub fn get_contract_addresses_by_chain_id(chain_id: u64) -> Result<ContractAddresses, ContractError> {
     match chain_id {
         31337 => load_local_addresses(),
-        80001 => load_polygon_addresses(), // Polygon Mumbai testnet
-        137 => load_polygon_addresses(), // Polygon mainnet (same addresses for now)
+        137 => load_polygon_addresses(), // Polygon mainnet
         84532 => load_base_addresses(), // Base Sepolia testnet
         8453 => load_base_addresses(), // Base mainnet (same addresses for now)
         1101 => load_polygon_zkevm_addresses(), // Polygon zkEVM mainnet
-        1442 => load_polygon_zkevm_addresses(), // Polygon zkEVM testnet
+        2442 => load_polygon_zkevm_addresses(), // Polygon zkEVM testnet
         _ => Err(ContractError::ContractCallError(format!("Unsupported chain ID: {}", chain_id))),
     }
 }

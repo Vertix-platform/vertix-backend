@@ -22,10 +22,7 @@ impl RegisterUserUseCase {
         first_name: &str,
         last_name: &str,
     ) -> Result<LoginResponse, ServiceError> {
-        // Business logic: Register user and generate token
-        let user = self.domain_auth_service.register(email, password, first_name, last_name).await?;
-        let token = self.domain_auth_service.generate_jwt(&user.id.to_string())?;
-
-        Ok(LoginResponse { token })
+        // Business logic: Register user and generate token pair
+        self.domain_auth_service.register(email, password, first_name, last_name).await
     }
 }
