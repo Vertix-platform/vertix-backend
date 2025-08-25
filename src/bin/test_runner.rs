@@ -7,7 +7,7 @@ use vertix_backend::tests::{
         test_mint_nft_to_collection, test_social_media_platforms, test_custom_image_minting, test_social_media_error_cases,
         test_get_all_collections, test_get_collection_by_id, test_get_collections_by_creator,
         test_list_social_media_nft, test_list_nft_for_auction,
-        test_connection,
+        test_connection, test_multi_chain_config,
     },
     admin_tests::test_admin_functionality,
 };
@@ -122,6 +122,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Running admin functionality test...");
             test_admin_functionality().await?;
         }
+        "multi_chain" => {
+            println!("Running multi-chain configuration test...");
+            test_multi_chain_config().await?;
+        }
         "all" => {
             println!("Running all tests...\n");
 
@@ -203,6 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  raise_dispute - Test raise dispute functionality");
             println!("  refund - Test refund functionality");
             println!("  admin - Test admin functionality");
+            println!("  multi_chain - Test multi-chain configuration");
             println!("  all - Run all tests");
         }
     }

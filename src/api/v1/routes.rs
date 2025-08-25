@@ -2,8 +2,9 @@ use axum::{
     middleware,
     Router,
     routing::{get, post, put, delete},
+    http::HeaderValue,
 };
-use tower_http::cors::{CorsLayer, Any};
+use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::handlers::AppState;
@@ -25,53 +26,84 @@ async fn health_check() -> &'static str {
 }
 
 pub fn create_v1_router(app_state: AppState) -> Router {
-    // Public routes
-    let public_routes = Router::new()
+    let allowed_origins = std::env::var("ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:3000,http://127.0.0.1:3000".to_string())
+        .split(',')
+        .map(|origin| origin.trim().parse::<HeaderValue>().unwrap())
+        .collect::<Vec<_>>();
+
+    let cors = CorsLayer::new()
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_origin(allowed_origins)
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::ACCEPT,
+        ])
+        .allow_credentials(true);
+
+
+    // Auth routes
+    let auth_routes = Router::new()
         .route("/register", post(register_handler))
         .route("/login", post(login_handler))
         .route("/refresh", post(refresh_token_handler))
         .route("/revoke", post(revoke_token_handler))
         .route("/google-auth", get(google_auth_handler))
         .route("/google-callback", get(google_callback_handler))
-        .route("/nonce", post(get_nonce_handler))
-        .route("/health", get(health_check))
-        // Contract utility endpoints (public)
-        .route("/contracts/network-info", get(get_network_info))
-        .route("/contracts/supported-chains", get(get_supported_chains))
-        .route("/contracts/check-connection", get(check_connection))
-        .route("/contracts/collections", get(get_all_collections))
-        // NFT endpoints (public - wallet-based authentication)
-        .route("/contracts/mint-nft", post(mint_nft))
-        .route("/contracts/initiate-social-media-nft-mint", post(initiate_social_media_nft_mint))
-        .route("/contracts/mint-social-media-nft", post(mint_social_media_nft))
-        .route("/contracts/list-nft", post(list_nft))
-        .route("/contracts/list-social-media-nft", post(list_social_media_nft))
-        .route("/contracts/list-nft-for-auction", post(list_nft_for_auction))
-        .route("/contracts/buy-nft", post(buy_nft))
-        .route("/contracts/buy-non-nft-asset", post(buy_non_nft_asset))
-        .route("/contracts/cancel-nft-listing", post(cancel_nft_listing));
+        .route("/nonce", post(get_nonce_handler));
 
-    // Protected routes
-    let protected_routes = Router::new()
+    // User routes
+    let user_routes = Router::new()
         .route("/profile", get(profile_handler))
         .route("/update-profile", put(update_profile_handler))
         .route("/connect-wallet", post(connect_wallet_handler))
         .route("/revoke-all", delete(revoke_all_tokens_handler))
-        // Non-NFT listing (requires user authentication + wallet connection)
-        .route("/contracts/list-non-nft-asset", post(list_non_nft_asset))
-        .route("/contracts/cancel-non-nft-listing", post(cancel_non_nft_listing))
-        .route("/contracts/confirm-transfer", post(confirm_transfer))
-        .route("/contracts/raise-dispute", post(raise_dispute))
-        .route("/contracts/refund", post(refund))
         .layer(middleware::from_fn_with_state(
             app_state.clone(),
             auth_middleware,
         ));
 
+    // Contract routes
+    let contract_routes = Router::new()
+        // Public contract endpoints
+        .route("/network-info", get(get_network_info))
+        .route("/supported-chains", get(get_supported_chains))
+        .route("/check-connection", get(check_connection))
+        .route("/collections", get(get_all_collections))
+        // NFT endpoints (public - wallet-based authentication)
+        .route("/mint-nft", post(mint_nft))
+        .route("/initiate-social-media-nft-mint", post(initiate_social_media_nft_mint))
+        .route("/mint-social-media-nft", post(mint_social_media_nft))
+        .route("/list-nft", post(list_nft))
+        .route("/list-social-media-nft", post(list_social_media_nft))
+        .route("/list-nft-for-auction", post(list_nft_for_auction))
+        .route("/buy-nft", post(buy_nft))
+        .route("/buy-non-nft-asset", post(buy_non_nft_asset))
+        .route("/cancel-nft-listing", post(cancel_nft_listing))
+        // Protected contract endpoints
+        .route("/list-non-nft-asset", post(list_non_nft_asset))
+        .route("/cancel-non-nft-listing", post(cancel_non_nft_listing))
+        .route("/confirm-transfer", post(confirm_transfer))
+        .route("/raise-dispute", post(raise_dispute))
+        .route("/refund", post(refund));
+
+    // Health check route
+    let health_route = Router::new()
+        .route("/health", get(health_check));
+
     Router::new()
-        .merge(public_routes)
-        .merge(protected_routes)
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any))
+        .nest("/auth", auth_routes)
+        .nest("/users", user_routes)
+        .nest("/contracts", contract_routes)
+        .merge(health_route)
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(app_state)
 }

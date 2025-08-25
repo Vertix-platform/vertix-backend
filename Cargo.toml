@@ -2,6 +2,7 @@
 name = "vertix-backend"
 version = "0.1.0"
 edition = "2024"
+default-run = "vertix-backend"
 
 [[bin]]
 name = "vertix-backend"
@@ -18,29 +19,30 @@ tower ={ version = "0.4.13", features = ["full"] }
 serde = { version = "1.0.195", features = ["derive"] } # JSON serialization
 reqwest = { version = "0.11", features = ["json", "multipart"] }
 dotenvy = "0.15.7"       # Environment variables
-tracing = "0.1.40"       # Logging
-tracing-subscriber = "0.3.18" # Logging subscriber
-tower-http = {version = "0.6.1", features = ["full"] } # HTTP middleware
-sqlx = { version = "0.7.3", features = ["runtime-tokio", "postgres", "uuid", "runtime-tokio-native-tls", "chrono"] }
-bcrypt = "0.15.0" # Password hashing
-jsonwebtoken = "9.2.0" # JWT generation
+tracing = "0.1.41"       # Logging
+tracing-subscriber = "0.3.19" # Logging subscriber
+tower-http = {version = "0.6.6", features = ["full"] } # HTTP middleware
+sqlx = { version = "0.7.4", features = ["runtime-tokio", "postgres", "uuid", "runtime-tokio-native-tls", "chrono"] }
+bcrypt = "0.15.1" # Password hashing
+jsonwebtoken = "9.3.1" # JWT generation
 oauth2 = "4.4.2" # OAuth 2.0 for Google
-serde_json = "1.0.111" # JSON handling
-uuid = { version = "1.7.0", features = ["v4", "serde"] }
-chrono = { version = "0.4.31", features = ["serde"] } # Timestamps
+serde_json = "1.0.143" # JSON handling
+uuid = { version = "1.18.0", features = ["v4", "serde"] }
+chrono = { version = "0.4.41", features = ["serde"] } # Timestamps
 dotenv = "0.15.0"
-ethers-core = "2.0.10"
+ethers-core = "2.0.14"
 ethers = {version = "2.0.14", features = ["legacy", "abigen"] }
 hex = "0.4.3"
 redis = "0.21"
 dns-lookup = "1.0"
-trust-dns-resolver = "0.23.0"
+trust-dns-resolver = "0.23.2"
 argon2 = "0.5.3"
-thiserror = "2.0.12"
-async-trait = "0.1.74"
+thiserror = "2.0.16"
+async-trait = "0.1.89"
 urlencoding = "2.1" # For URL encoding in OAuth flows
 backtrace = "0.3" # For debugging panics
-alloy = { version = "1.0.18", features = ["full"] }
-regex = "1.10.2" # Regular expressions for validation
+alloy = { version = "1.0.25", features = ["full"] }
+regex = "1.11.2" # Regular expressions for validation
 rand = "0.8.5" # Random number generation
-sha2 = "0.10.8" # SHA-256 hashing
+sha2 = "0.10.9" # SHA-256 hashing
+lazy_static = "1.5.0" # For static initialization

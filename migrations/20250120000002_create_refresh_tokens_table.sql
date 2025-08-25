@@ -6,8 +6,7 @@ CREATE TABLE refresh_tokens (
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     revoked_at TIMESTAMP WITH TIME ZONE,
-    family_id UUID NOT NULL, -- For token rotation
-    CONSTRAINT refresh_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    family_id UUID NOT NULL -- For token rotation
 );
 
 -- Create indexes for performance

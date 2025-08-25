@@ -6,7 +6,7 @@ use ethers::utils::{hash_message, to_checksum};
 use ethers::types::Signature;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use oauth2::{
-    basic::BasicClient, AuthUrl, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, RedirectUrl,
+    basic::BasicClient, AuthUrl, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
     Scope, TokenResponse as OAuthTokenResponse,
 };
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,9 @@ use uuid::Uuid;
 use std::env;
 use rand::Rng;
 use chrono::{Duration, Utc};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use lazy_static::lazy_static;
 
 use crate::api::dto::{LoginResponse, RefreshTokenResponse};
 use crate::domain::{User, ConnectWalletRequest, UpdateProfileRequest, TokenPair};
@@ -148,6 +151,10 @@ impl From<ethers::contract::AbiError> for ContractError {
     }
 }
 
+lazy_static! {
+    static ref PKCE_STORE: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
+}
+
 pub struct AuthService {
     user_repo: UserRepository,
     refresh_token_repo: RefreshTokenRepository,
@@ -186,7 +193,7 @@ impl AuthService {
         password: &str,
     ) -> Result<LoginResponse, ServiceError> {
         let user = self.user_repo.find_by_email(email).await?
-            .ok_or(ServiceError::InvalidCredentials)?;
+            .ok_or(ServiceError::UserNotFound)?;
 
         if let Some(password_hash) = user.password_hash {
             if !self.verify_password(&password_hash, password)? {
@@ -426,10 +433,15 @@ impl AuthService {
 
     pub fn google_auth_url() -> (String, CsrfToken) {
         let client = Self::google_oauth_client();
-        let (pkce_code_challenge, _pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
+        let (pkce_code_challenge, pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
+        let csrf_token = CsrfToken::new_random();
 
-        let (auth_url, csrf_token) = client
-            .authorize_url(CsrfToken::new_random)
+        // Store the PKCE verifier with the CSRF token as key
+        let mut store = PKCE_STORE.lock().unwrap();
+        store.insert(csrf_token.secret().to_string(), pkce_code_verifier.secret().to_string());
+
+        let (auth_url, _) = client
+            .authorize_url(|| csrf_token.clone())
             .add_scope(Scope::new("email".to_string()))
             .add_scope(Scope::new("profile".to_string()))
             .set_pkce_challenge(pkce_code_challenge)
@@ -441,11 +453,26 @@ impl AuthService {
     pub async fn google_callback(
         &self,
         code: &str,
-        _: &str,
+        state: &str,
     ) -> Result<LoginResponse, ServiceError> {
+        // Retrieve the PKCE verifier using the state as key
+        let pkce_verifier = {
+            let store = PKCE_STORE.lock().unwrap();
+            store.get(state)
+                .cloned()
+                .ok_or_else(|| ServiceError::OAuthError("Invalid state or expired PKCE verifier".to_string()))?
+        };
+
+        // Clean up the stored verifier
+        {
+            let mut store = PKCE_STORE.lock().unwrap();
+            store.remove(state);
+        }
+
         let client = Self::google_oauth_client();
         let token_response = client
             .exchange_code(oauth2::AuthorizationCode::new(code.to_string()))
+            .set_pkce_verifier(PkceCodeVerifier::new(pkce_verifier))
             .request_async(oauth2::reqwest::async_http_client)
             .await
             .map_err(|e| ServiceError::OAuthError(e.to_string()))?;
@@ -474,10 +501,27 @@ impl AuthService {
             .as_str()
             .unwrap_or("Unknown");
 
+        // First, try to find user by Google ID
         let user = self.user_repo.find_by_google_id(google_id).await?;
         let user = match user {
             Some(user) => user,
-            None => self.user_repo.create_google_user(email, google_id, first_name, last_name).await?,
+            None => {
+                // If not found by Google ID, check if user exists by email
+                let existing_user = self.user_repo.find_by_email(email).await?;
+                match existing_user {
+                    Some(user) => {
+                        // User exists with this email but no Google ID, update with Google ID
+                        self.user_repo.update_google_id(user.id, google_id).await?;
+                        // Refresh user data
+                        self.user_repo.find_by_id(user.id).await?
+                            .ok_or_else(|| ServiceError::UserNotFound)?
+                    }
+                    None => {
+                        // User doesn't exist, create new Google user
+                        self.user_repo.create_google_user(email, google_id, first_name, last_name).await?
+                    }
+                }
+            }
         };
 
         let token_pair = self.generate_token_pair(&user.id.to_string()).await?;

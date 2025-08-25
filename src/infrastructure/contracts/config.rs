@@ -5,13 +5,74 @@ use crate::infrastructure::contracts::types::{
 use crate::infrastructure::contracts::addresses;
 use crate::domain::services::ContractError;
 
+/// Get all available chains from environment variables
+pub fn get_available_chains_from_env() -> Result<Vec<ChainConfig>, ContractError> {
+    let mut available_chains = Vec::new();
+
+    // Check for Anvil (local development)
+    if let Ok(chain_id) = std::env::var("ANVIL_CHAIN_ID") {
+        if chain_id == "31337" {
+            available_chains.push(get_anvil_config()?);
+        }
+    }
+
+    // Check for Polygon Mainnet
+    if let Ok(chain_id) = std::env::var("POLYGON_CHAIN_ID") {
+        if chain_id == "137" {
+            available_chains.push(get_polygon_mainnet_config()?);
+        }
+    }
+
+    // Check for Base Mainnet
+    if let Ok(chain_id) = std::env::var("BASE_CHAIN_ID") {
+        if chain_id == "8453" {
+            available_chains.push(get_base_mainnet_config()?);
+        }
+    }
+
+    // Check for Base Sepolia
+    if let Ok(chain_id) = std::env::var("BASE_SEPOLIA_CHAIN_ID") {
+        if chain_id == "84532" {
+            available_chains.push(get_base_sepolia_config()?);
+        }
+    }
+
+    // Check for Polygon zkEVM Mainnet
+    if let Ok(chain_id) = std::env::var("POLYGON_ZKEVM_CHAIN_ID") {
+        if chain_id == "1101" {
+            available_chains.push(get_polygon_zkevm_mainnet_config()?);
+        }
+    }
+
+    // Check for Polygon zkEVM Testnet
+    if let Ok(chain_id) = std::env::var("POLYGON_ZKEVM_TESTNET_CHAIN_ID") {
+        if chain_id == "2442" {
+            available_chains.push(get_polygon_zkevm_testnet_config()?);
+        }
+    }
+
+    // If no chains are configured, add default
+    if available_chains.is_empty() {
+        available_chains.push(get_anvil_config()?);
+    }
+
+    Ok(available_chains)
+}
+
 /// Get the current chain configuration from environment variables
 pub fn get_current_chain_config() -> Result<ChainConfig, ContractError> {
-    let chain_id = std::env::var("CHAIN_ID")
+    let chain_id = std::env::var("DEFAULT_CHAIN_ID")
         .unwrap_or_else(|_| "31337".to_string())
         .parse::<u64>()
         .unwrap_or(31337);
 
+    // First try to get from available chains
+    let available_chains = get_available_chains_from_env()?;
+    if let Some(config) = available_chains.iter().find(|c| c.chain_id == chain_id) {
+        return Ok(config.clone());
+    }
+
+    // Fallback to hardcoded configs
     match chain_id {
         137 => get_polygon_mainnet_config(),
         8453 => get_base_mainnet_config(),
@@ -25,6 +86,13 @@ pub fn get_current_chain_config() -> Result<ChainConfig, ContractError> {
 
 /// Get all supported chain configurations
 pub fn get_supported_chains() -> Result<Vec<ChainConfig>, ContractError> {
+    // First try to get chains from environment variables
+    let env_chains = get_available_chains_from_env()?;
+    if !env_chains.is_empty() {
+        return Ok(env_chains);
+    }
+
+    // Fallback to all hardcoded chains
     let mut chains = Vec::new();
 
     chains.push(get_anvil_config()?);
@@ -242,23 +310,82 @@ pub fn get_gas_limit_for_operation(operation: &str) -> Result<u64, ContractError
 
 /// Get private key with fallback for Anvil
 pub fn get_private_key() -> Result<String, ContractError> {
+    // First try to get the main PRIVATE_KEY
     match std::env::var("PRIVATE_KEY") {
         Ok(key) => Ok(key),
         Err(_) => {
-            // Check if we're on Anvil (local development)
-            let chain_id = std::env::var("CHAIN_ID")
-                .unwrap_or_else(|_| "31337".to_string())
-                .parse::<u64>()
-                .unwrap_or(31337);
-
-            if chain_id == 31337 {
-                // Use default Anvil private key for local development
-                Ok("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string())
+            // Check available chains to determine which private key to use
+            let available_chains = get_available_chains_from_env()?;
+            
+            // If we have multiple chains, we need a specific private key
+            if available_chains.len() > 1 {
+                return Err(ContractError::InvalidSignature { 
+                    reason: "Multiple chains detected. PRIVATE_KEY environment variable must be set for multi-chain operations.".to_string() 
+                });
+            }
+            
+            // If only one chain, check if it's Anvil
+            if let Some(chain_config) = available_chains.first() {
+                if chain_config.chain_id == 31337 {
+                    // Use default Anvil private key for local development
+                    Ok("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string())
+                } else {
+                    // For other chains, require explicit private key
+                    Err(ContractError::InvalidSignature { 
+                        reason: format!("PRIVATE_KEY environment variable not set. Required for chain ID: {}", chain_config.chain_id)
+                    })
+                }
             } else {
-                // For other chains, require explicit private key
-                Err(ContractError::InvalidSignature { 
-                    reason: "PRIVATE_KEY environment variable not set. Required for non-local chains.".to_string() 
-                })
+                // Fallback to checking DEFAULT_CHAIN_ID
+                let chain_id = std::env::var("DEFAULT_CHAIN_ID")
+                    .unwrap_or_else(|_| "31337".to_string())
+                    .parse::<u64>()
+                    .unwrap_or(31337);
+
+                if chain_id == 31337 {
+                    // Use default Anvil private key for local development
+                    Ok("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string())
+                } else {
+                    // For other chains, require explicit private key
+                    Err(ContractError::InvalidSignature { 
+                        reason: format!("PRIVATE_KEY environment variable not set. Required for chain ID: {}", chain_id)
+                    })
+                }
+            }
+        }
+    }
+}
+
+/// Get private key for a specific chain
+pub fn get_private_key_for_chain(chain_id: u64) -> Result<String, ContractError> {
+    // Try chain-specific private key first
+    let chain_specific_key = match chain_id {
+        31337 => std::env::var("ANVIL_PRIVATE_KEY"),
+        137 => std::env::var("POLYGON_PRIVATE_KEY"),
+        8453 => std::env::var("BASE_PRIVATE_KEY"),
+        84532 => std::env::var("BASE_SEPOLIA_PRIVATE_KEY"),
+        1101 => std::env::var("POLYGON_ZKEVM_PRIVATE_KEY"),
+        2442 => std::env::var("POLYGON_ZKEVM_TESTNET_PRIVATE_KEY"),
+        _ => Err(std::env::VarError::NotPresent),
+    };
+
+    match chain_specific_key {
+        Ok(key) => Ok(key),
+        Err(_) => {
+            // Fallback to main PRIVATE_KEY
+            match std::env::var("PRIVATE_KEY") {
+                Ok(key) => Ok(key),
+                Err(_) => {
+                    if chain_id == 31337 {
+                        // Use default Anvil private key for local development
+                        Ok("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string())
+                    } else {
+                        // For other chains, require explicit private key
+                        Err(ContractError::InvalidSignature { 
+                            reason: format!("No private key found for chain ID: {}. Set PRIVATE_KEY or chain-specific key.", chain_id)
+                        })
+                    }
+                }
             }
         }
     }

@@ -28,14 +28,23 @@ impl TestConfig {
     pub async fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         dotenvy::dotenv().ok();
 
-        let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string());
-        let private_key = std::env::var("PRIVATE_KEY").expect("PRIVATE_KEY must be set");
-        let chain_id = std::env::var("CHAIN_ID").unwrap_or_else(|_| "31337".to_string()).parse::<u64>()?;
+        // Use the new multi-chain configuration system
+        let chain_config = crate::infrastructure::contracts::config::get_current_chain_config()
+            .map_err(|e| format!("Failed to get chain config: {}", e))?;
+
+        let chain_id = chain_config.chain_id;
+        let rpc_url = chain_config.rpc_url;
+
+        // Get private key for the specific chain
+        let private_key = crate::infrastructure::contracts::config::get_private_key_for_chain(chain_id)
+            .map_err(|e| format!("Failed to get private key for chain {}: {}", chain_id, e))?;
 
         // Setup database pool for tests
         let database_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/vertix_test".to_string());
         let db_pool = PgPool::connect(&database_url).await?;
+
+        println!("Test Config - Chain ID: {}, RPC: {}", chain_id, rpc_url);
 
         Ok(Self {
             rpc_url,
@@ -2107,4 +2116,40 @@ mod tests {
 
         println!("   Domain models test passed!");
     }
+}
+
+/// Test multi-chain configuration
+pub async fn test_multi_chain_config() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Testing multi-chain configuration...");
+
+    // Get available chains from environment
+    let available_chains = crate::infrastructure::contracts::config::get_available_chains_from_env()
+        .map_err(|e| format!("Failed to get available chains: {}", e))?;
+
+    println!("   Available chains from environment: {}", available_chains.len());
+    for chain in &available_chains {
+        println!("     - {} (ID: {})", chain.name, chain.chain_id);
+    }
+
+    // Get current chain
+    let current_chain = crate::infrastructure::contracts::config::get_current_chain_config()
+        .map_err(|e| format!("Failed to get current chain: {}", e))?;
+
+    println!("   Current chain: {} (ID: {})", current_chain.name, current_chain.chain_id);
+
+    // Get all supported chains
+    let supported_chains = crate::infrastructure::contracts::config::get_supported_chains()
+        .map_err(|e| format!("Failed to get supported chains: {}", e))?;
+
+    println!("   Total supported chains: {}", supported_chains.len());
+
+    // Test private key retrieval for current chain
+    let private_key = crate::infrastructure::contracts::config::get_private_key_for_chain(current_chain.chain_id)
+        .map_err(|e| format!("Failed to get private key for chain {}: {}", current_chain.chain_id, e))?;
+
+    println!("   Private key retrieved for chain {}: {}", current_chain.chain_id, 
+             if private_key.len() > 10 { format!("{}...", &private_key[..10]) } else { private_key.clone() });
+
+    println!("Multi-chain configuration test completed successfully!");
+    Ok(())
 }

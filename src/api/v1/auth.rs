@@ -10,16 +10,18 @@ use crate::api::dto::{
     RefreshTokenRequest, RefreshTokenResponse, RevokeTokenRequest, RevokeTokenResponse
 };
 use crate::api::middleware::AuthenticatedUser;
+use crate::api::errors::{ApiResult, ApiError};
+use crate::domain::ServiceError;
 use crate::handlers::AppState;
 
 pub async fn register_handler(
     State(app_state): State<AppState>,
     Json(request): Json<RegisterRequest>,
-) -> Result<Json<LoginResponse>, String> {
+) -> ApiResult<Json<LoginResponse>> {
     // Input validation
     if request.email.is_empty() || request.password.is_empty() ||
        request.first_name.is_empty() || request.last_name.is_empty() {
-        return Err("All fields are required".to_string());
+        return Err(ApiError::BadRequest("All fields are required".to_string()));
     }
 
     // Delegate to application service
@@ -30,7 +32,14 @@ pub async fn register_handler(
         &request.last_name,
     )
     .await
-    .map_err(|e| format!("Registration failed: {:?}", e))?;
+            .map_err(|e| {
+            match e {
+                ServiceError::UserAlreadyExists => {
+                    ApiError::Conflict("An account with this email already exists.".to_string())
+                }
+                _ => ApiError::InternalServerError(format!("Registration failed: {}", e))
+            }
+        })?;
 
     info!("User registered: {}", request.email);
     Ok(Json(response))
@@ -39,10 +48,20 @@ pub async fn register_handler(
 pub async fn login_handler(
     State(app_state): State<AppState>,
     Json(request): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, String> {
+) -> ApiResult<Json<LoginResponse>> {
     let response = app_state.auth_service.login(&request.email, &request.password)
         .await
-        .map_err(|e| format!("Login failed: {:?}", e))?;
+        .map_err(|e| {
+            match e {
+                ServiceError::InvalidCredentials => {
+                    ApiError::Unauthorized("Invalid email or password. Please check your credentials and try again.".to_string())
+                }
+                ServiceError::UserNotFound => {
+                    ApiError::NotFound("No account found with this email address. Please create an account first.".to_string())
+                }
+                _ => ApiError::InternalServerError(format!("Login failed: {}", e))
+            }
+        })?;
 
     info!("User logged in: {}", request.email);
     Ok(Json(response))
@@ -51,10 +70,23 @@ pub async fn login_handler(
 pub async fn refresh_token_handler(
     State(app_state): State<AppState>,
     Json(request): Json<RefreshTokenRequest>,
-) -> Result<Json<RefreshTokenResponse>, String> {
+) -> ApiResult<Json<RefreshTokenResponse>> {
     let response = app_state.auth_service.refresh_token(&request.refresh_token)
         .await
-        .map_err(|e| format!("Token refresh failed: {:?}", e))?;
+        .map_err(|e| {
+            match e {
+                ServiceError::InvalidRefreshToken => {
+                    ApiError::Unauthorized("Invalid refresh token".to_string())
+                }
+                ServiceError::RefreshTokenExpired => {
+                    ApiError::Unauthorized("Refresh token has expired".to_string())
+                }
+                ServiceError::RefreshTokenRevoked => {
+                    ApiError::Unauthorized("Refresh token has been revoked".to_string())
+                }
+                _ => ApiError::InternalServerError(format!("Token refresh failed: {}", e))
+            }
+        })?;
 
     info!("Token refreshed successfully");
     Ok(Json(response))
@@ -63,10 +95,10 @@ pub async fn refresh_token_handler(
 pub async fn revoke_token_handler(
     State(app_state): State<AppState>,
     Json(request): Json<RevokeTokenRequest>,
-) -> Result<Json<RevokeTokenResponse>, String> {
+) -> ApiResult<Json<RevokeTokenResponse>> {
     app_state.auth_service.revoke_token(&request.refresh_token)
         .await
-        .map_err(|e| format!("Token revocation failed: {:?}", e))?;
+        .map_err(|e| ApiError::InternalServerError(format!("Token revocation failed: {}", e)))?;
 
     info!("Token revoked successfully");
     Ok(Json(RevokeTokenResponse {
@@ -77,10 +109,10 @@ pub async fn revoke_token_handler(
 pub async fn revoke_all_tokens_handler(
     State(app_state): State<AppState>,
     user: AuthenticatedUser,
-) -> Result<Json<RevokeTokenResponse>, String> {
+) -> ApiResult<Json<RevokeTokenResponse>> {
     app_state.auth_service.revoke_all_user_tokens(&user.user_id.to_string())
         .await
-        .map_err(|e| format!("Token revocation failed: {:?}", e))?;
+        .map_err(|e| ApiError::InternalServerError(format!("Token revocation failed: {}", e)))?;
 
     info!("All tokens revoked for user: {}", user.user_id);
     Ok(Json(RevokeTokenResponse {
@@ -96,10 +128,10 @@ pub async fn google_auth_handler() -> Json<GoogleAuthResponse> {
 pub async fn google_callback_handler(
     State(app_state): State<AppState>,
     Query(query): Query<GoogleCallbackQuery>,
-) -> Result<Json<LoginResponse>, String> {
+) -> ApiResult<Json<LoginResponse>> {
     let response = app_state.auth_service.google_callback(&query.code, &query.state)
         .await
-        .map_err(|e| format!("Google callback failed: {:?}", e))?;
+        .map_err(|e| ApiError::InternalServerError(format!("Google callback failed: {}", e)))?;
 
     info!("Google OAuth callback successful");
     Ok(Json(response))
@@ -109,10 +141,10 @@ pub async fn connect_wallet_handler(
     State(app_state): State<AppState>,
     authenticated_user: AuthenticatedUser,
     Json(request): Json<ConnectWalletRequest>,
-) -> Result<Json<UserResponse>, String> {
+) -> ApiResult<Json<UserResponse>> {
     let user = app_state.auth_service.connect_wallet(Some(authenticated_user.user_id), request)
         .await
-        .map_err(|e| format!("Wallet connection failed: {:?}", e))?;
+        .map_err(|e| ApiError::InternalServerError(format!("Wallet connection failed: {}", e)))?;
 
     info!("Wallet connected: {}", user.wallet_address.as_ref().unwrap_or(&"unknown".to_string()));
     Ok(Json(UserResponse {
@@ -130,10 +162,10 @@ pub async fn connect_wallet_handler(
 pub async fn get_nonce_handler(
     State(app_state): State<AppState>,
     Json(request): Json<NonceRequest>,
-) -> Result<Json<NonceResponse>, String> {
+) -> ApiResult<Json<NonceResponse>> {
     let nonce = app_state.auth_service.create_nonce(&request.wallet_address)
         .await
-        .map_err(|e| format!("Nonce creation failed: {:?}", e))?;
+        .map_err(|e| ApiError::InternalServerError(format!("Nonce creation failed: {}", e)))?;
 
     info!("Nonce created for wallet: {}", request.wallet_address);
     Ok(Json(NonceResponse { nonce }))

@@ -108,6 +108,22 @@ impl UserRepository {
         Ok(user)
     }
 
+    pub async fn update_google_id(&self, user_id: Uuid, google_id: &str) -> Result<User, sqlx::Error> {
+        let user = sqlx::query_as::<_, User>(
+            r#"
+            UPDATE users
+            SET google_id = $1
+            WHERE id = $2
+            RETURNING id, email, password_hash, google_id, first_name, last_name, username, wallet_address, is_verified, created_at
+            "#
+        )
+        .bind(google_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(user)
+    }
+
     pub async fn find_by_wallet_address(&self, wallet_address: &str) -> Result<Option<User>, sqlx::Error> {
         let user = sqlx::query_as::<_, User>(
             "SELECT id, email, password_hash, google_id, first_name, last_name, username, wallet_address, is_verified, created_at FROM users WHERE wallet_address = $1"
