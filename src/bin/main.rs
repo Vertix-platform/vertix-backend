@@ -43,12 +43,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = create_router(pool).await;
 
     // Load server address from environment
-    let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port = std::env::var("PORT").unwrap_or_else(|_| "8080".to_string());
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
 
     // Start the server
-    info!("Server running at http://{}", addr);
+    info!("Server running at http://{}:{}", host, port);
     axum::serve(
         tokio::net::TcpListener::bind(addr).await?,
         app.into_make_service(),
