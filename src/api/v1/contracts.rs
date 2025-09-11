@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use crate::{
     domain::models::{
-        MintNftRequest,
         InitiateSocialMediaNftMintRequest,
         MintSocialMediaNftRequest,
         ListNftRequest,
@@ -19,18 +18,22 @@ use crate::{
         ConfirmTransferRequest, RaiseDisputeRequest, RefundRequest,
     },
     domain::SocialMediaPlatform,
-    application::services::{ContractService, ReadOnlyContractService},
+    application::services::ContractService,
     // application::services::contract_service::ContractService,
     api::validation::{Validator, Validate, ValidationResult, ValidationError},
     api::errors::{ApiError, ApiResult},
     handlers::AppState,
     api::middleware::auth::AuthenticatedUser,
 };
+use crate::infrastructure::contracts::{config, types};
+use crate::infrastructure::repositories::collections_repository::CollectionsRepository;
+use crate::domain::models::Collection;
+
 use std::sync::Arc;
 
 // Helper function to create contract service with current chain configuration
 async fn create_contract_service(db_pool: PgPool) -> Result<ContractService, ApiError> {
-    let chain_config = crate::infrastructure::contracts::config::get_current_chain_config()
+    let chain_config = config::get_current_chain_config()
         .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
 
     ContractService::new_with_auto_private_key(
@@ -40,17 +43,7 @@ async fn create_contract_service(db_pool: PgPool) -> Result<ContractService, Api
     ).await.map_err(|e| ApiError::internal_server_error(format!("Failed to create contract service: {}", e)))
 }
 
-// Helper function to create read-only contract service with current chain configuration
-async fn create_read_only_contract_service(db_pool: PgPool) -> Result<ReadOnlyContractService, ApiError> {
-    let chain_config = crate::infrastructure::contracts::config::get_current_chain_config()
-        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
 
-    ContractService::new_read_only(
-        chain_config.rpc_url.clone(),
-        chain_config.chain_id,
-        db_pool,
-    ).await.map_err(|e| ApiError::internal_server_error(format!("Failed to create read-only contract service: {}", e)))
-}
 
 // ============ REQUEST/RESPONSE TYPES ============
 
@@ -61,36 +54,6 @@ pub struct ApiResponse<T> {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct MintNftApiRequest {
-    pub wallet_address: String,
-    pub token_uri: String,
-    pub metadata_hash: String,
-    pub collection_id: Option<u64>,
-    pub royalty_bps: Option<u64>,
-}
-
-impl Validate for MintNftApiRequest {
-    fn validate(&self) -> ValidationResult<()> {
-        let mut results = vec![
-            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
-            Validator::validate_ipfs_uri(&self.token_uri, "token_uri"),
-            Validator::validate_hex_string(&self.metadata_hash, "metadata_hash", Some(64)), // 32 bytes = 64 hex chars
-        ];
-
-        // Validate royalty_bps if provided
-        if let Some(royalty_bps) = self.royalty_bps {
-            if royalty_bps > 10000 {
-                results.push(Err(crate::api::validation::ValidationError {
-                    field: "royalty_bps".to_string(),
-                    message: "Royalty basis points cannot exceed 10000 (100%)".to_string(),
-                }));
-            }
-        }
-
-        Validator::combine_results(results)
-    }
-}
 
 #[derive(Debug, Deserialize)]
 pub struct ListNftApiRequest {
@@ -153,6 +116,9 @@ pub struct CancelNftListingApiRequest {
     pub wallet_address: String,
     pub listing_id: u64,
 }
+
+
+
 
 impl Validate for CancelNftListingApiRequest {
     fn validate(&self) -> ValidationResult<()> {
@@ -378,90 +344,6 @@ impl Validate for MintSocialMediaNftApiRequest {
 
 // ============ NFT OPERATIONS ============
 
-/// Mint a new NFT
-pub async fn mint_nft(
-    State(state): State<AppState>,
-    Json(request): Json<MintNftApiRequest>,
-) -> ApiResult<impl IntoResponse> {
-    // Validate request
-    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
-
-    let contract_request = MintNftRequest {
-        to: Arc::from(request.wallet_address.clone()),
-        token_uri: Arc::from(request.token_uri),
-        metadata_hash: Arc::from(request.metadata_hash),
-        collection_id: request.collection_id,
-        royalty_bps: request.royalty_bps,
-    };
-
-    // Create contract service for this request
-    let contract_service = create_contract_service(state.pool).await?;
-
-    let response = contract_service.mint_nft(request.wallet_address, contract_request).await
-        .map_err(|e| ApiError::bad_request(format!("Failed to mint NFT: {}", e)))?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "data": {
-            "token_id": response.token_id,
-            "transaction_hash": response.transaction_hash.to_string(),
-            "block_number": response.block_number
-        },
-        "error": null
-    })))
-}
-
-
-// ============ UTILITY OPERATIONS ============
-
-/// Get network information
-pub async fn get_network_info(
-    State(_state): State<AppState>,
-) -> ApiResult<impl IntoResponse> {
-    // Get current chain configuration
-    let chain_config = crate::infrastructure::contracts::config::get_current_chain_config()
-        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
-    
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "data": {
-            "chain_id": chain_config.chain_id,
-            "chain_name": chain_config.name,
-            "chain_type": match chain_config.chain_type {
-                crate::infrastructure::contracts::types::ChainType::Polygon => "polygon",
-                crate::infrastructure::contracts::types::ChainType::Base => "base",
-            },
-            "rpc_url": chain_config.rpc_url,
-            "explorer_url": chain_config.explorer_url,
-            "native_currency": {
-                "name": chain_config.native_currency.name,
-                "symbol": chain_config.native_currency.symbol,
-                "decimals": chain_config.native_currency.decimals,
-            },
-            "gas_settings": {
-                "default_gas_limit": chain_config.gas_settings.default_gas_limit,
-                "max_gas_limit": chain_config.gas_settings.max_gas_limit,
-                "block_time_seconds": chain_config.gas_settings.block_time_seconds,
-            }
-        },
-        "error": null
-    })))
-}
-
-/// Check contract service connection
-pub async fn check_connection(
-    State(state): State<AppState>,
-) -> ApiResult<impl IntoResponse> {
-    // Create contract service for this request
-    let contract_service = create_contract_service(state.pool).await?;
-
-    let is_connected = contract_service.is_connected().await;
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "data": is_connected,
-        "error": null
-    })))
-}
 
 /// Initiate social media NFT minting process
 /// This endpoint generates all necessary data including signature for the minting process
@@ -572,25 +454,73 @@ pub async fn mint_social_media_nft(
     })))
 }
 
-/// Get all collections from the contract
+/// Get all collections from the database (populated by blockchain events)
 pub async fn get_all_collections(
     State(state): State<AppState>,
 ) -> ApiResult<impl IntoResponse> {
-    // Create read-only contract service for this request
-    let contract_service = create_read_only_contract_service(state.pool).await?;
+    // Use collections repository to get collections from database
+    let collections_repository = CollectionsRepository::new(state.pool);
 
-    match contract_service.get_all_collections().await {
+    match collections_repository.get_all_collections().await {
         Ok(collections) => {
+            // Convert database collections to API response format
+            let api_collections: Vec<Collection> = collections
+                .into_iter()
+                .map(|db_collection| Collection {
+                    collection_id: db_collection.collection_id as u64,
+                    chain_id: db_collection.chain_id as u64,
+                    name: Arc::from(db_collection.name),
+                    symbol: Arc::from(db_collection.symbol),
+                    image: Arc::from(db_collection.image.unwrap_or_default()),
+                    max_supply: db_collection.max_supply as u16,
+                    creator: Arc::from(db_collection.creator_address),
+                    current_supply: db_collection.current_supply as u16,
+                })
+                .collect();
+
             Ok(Json(serde_json::json!({
                 "success": true,
-                "data": collections,
+                "data": api_collections,
                 "message": "Collections retrieved successfully"
             })))
         }
         Err(e) => {
-            Err(ApiError::internal_server_error(&e.to_string()))
+            Err(ApiError::internal_server_error(&format!("Database error: {}", e)))
         }
     }
+}
+
+/// Get current chain configuration and contract addresses
+pub async fn get_chain_info(
+    State(_state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    // Get current chain configuration
+    let chain_config = config::get_current_chain_config()
+        .map_err(|e| ApiError::internal_server_error(&format!("Failed to get chain config: {}", e)))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": {
+            "chain": {
+                "id": chain_config.chain_id,
+                "name": chain_config.name,
+                "type": format!("{:?}", chain_config.chain_type),
+                "rpc_url": chain_config.rpc_url,
+                "explorer_url": chain_config.explorer_url,
+                "native_currency": {
+                    "name": chain_config.native_currency.name,
+                    "symbol": chain_config.native_currency.symbol,
+                    "decimals": chain_config.native_currency.decimals
+                }
+            },
+            "contracts": {
+                "vertix_nft": format!("{:?}", chain_config.contract_addresses.vertix_nft),
+                "vertix_escrow": format!("{:?}", chain_config.contract_addresses.vertix_escrow),
+                "vertix_governance": format!("{:?}", chain_config.contract_addresses.vertix_governance)
+            }
+        },
+        "message": "Chain information retrieved successfully"
+    })))
 }
 
 /// List an NFT for sale (wallet-only operation)
@@ -955,21 +885,72 @@ pub async fn refund(
     }
 }
 
+// ============ UTILITY OPERATIONS ============
+
+/// Get network information
+pub async fn get_network_info(
+    State(_state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    // Get current chain configuration
+    let chain_config = config::get_current_chain_config()
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": {
+            "chain_id": chain_config.chain_id,
+            "chain_name": chain_config.name,
+            "chain_type": match chain_config.chain_type {
+                types::ChainType::Polygon => "polygon",
+                types::ChainType::Base => "base",
+            },
+            "rpc_url": chain_config.rpc_url,
+            "explorer_url": chain_config.explorer_url,
+            "native_currency": {
+                "name": chain_config.native_currency.name,
+                "symbol": chain_config.native_currency.symbol,
+                "decimals": chain_config.native_currency.decimals,
+            },
+            "gas_settings": {
+                "default_gas_limit": chain_config.gas_settings.default_gas_limit,
+                "max_gas_limit": chain_config.gas_settings.max_gas_limit,
+                "block_time_seconds": chain_config.gas_settings.block_time_seconds,
+            }
+        },
+        "error": null
+    })))
+}
+
+/// Check contract service connection
+pub async fn check_connection(
+    State(state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    // Create contract service for this request
+    let contract_service = create_contract_service(state.pool).await?;
+
+    let is_connected = contract_service.is_connected().await;
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": is_connected,
+        "error": null
+    })))
+}
+
 /// Get all supported chains information
 pub async fn get_supported_chains(
     State(_state): State<AppState>,
 ) -> ApiResult<impl IntoResponse> {
     // Get all supported chain configurations
-    let supported_chains = crate::infrastructure::contracts::config::get_supported_chains()
+    let supported_chains = config::get_supported_chains()
         .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
-    
+
     let chains_data: Vec<serde_json::Value> = supported_chains.into_iter().map(|chain_config| {
         serde_json::json!({
             "chain_id": chain_config.chain_id,
             "chain_name": chain_config.name,
             "chain_type": match chain_config.chain_type {
-                crate::infrastructure::contracts::types::ChainType::Polygon => "polygon",
-                crate::infrastructure::contracts::types::ChainType::Base => "base",
+                types::ChainType::Polygon => "polygon",
+                types::ChainType::Base => "base",
             },
             "rpc_url": chain_config.rpc_url,
             "explorer_url": chain_config.explorer_url,
@@ -985,7 +966,7 @@ pub async fn get_supported_chains(
             }
         })
     }).collect();
-    
+
     Ok(Json(serde_json::json!({
         "success": true,
         "data": chains_data,

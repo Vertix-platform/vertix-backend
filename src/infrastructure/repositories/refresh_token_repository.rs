@@ -132,4 +132,23 @@ impl RefreshTokenRepository {
 
         Ok(count)
     }
+
+    pub async fn revoke_oldest_session(&self, user_id: Uuid) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE refresh_tokens 
+             SET revoked_at = NOW() 
+             WHERE id = (
+                 SELECT id 
+                 FROM refresh_tokens 
+                 WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW() 
+                 ORDER BY created_at ASC 
+                 LIMIT 1
+             )"
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }

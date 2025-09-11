@@ -78,7 +78,7 @@ fn extract_addresses(broadcast_dir: &str, addresses_dir: &str, network_name: &st
 
         let network_arg = match network_name {
             "anvil" => "--network anvil",
-            "base_sepolia" => "--network base-testnet",
+            "base_sepolia" => "--network base-sepolia",
             "polygon_zkevm_testnet" => "--network polygon-zkevm-testnet",
             _ => "--network anvil"
         };

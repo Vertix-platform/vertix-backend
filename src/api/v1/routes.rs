@@ -14,8 +14,8 @@ use super::{
     connect_wallet_handler, get_nonce_handler, profile_handler, update_profile_handler,
     refresh_token_handler, revoke_token_handler, revoke_all_tokens_handler,
     // Contract endpoints
-    mint_nft, initiate_social_media_nft_mint, mint_social_media_nft,
-    get_network_info, get_supported_chains, check_connection, get_all_collections,
+    initiate_social_media_nft_mint,
+    get_network_info, get_supported_chains, check_connection, get_all_collections, get_chain_info,
     list_nft, list_non_nft_asset, list_social_media_nft, list_nft_for_auction,
     buy_nft, buy_non_nft_asset, cancel_nft_listing, cancel_non_nft_listing,
     confirm_transfer, raise_dispute, refund,
@@ -77,10 +77,9 @@ pub fn create_v1_router(app_state: AppState) -> Router {
         .route("/supported-chains", get(get_supported_chains))
         .route("/check-connection", get(check_connection))
         .route("/collections", get(get_all_collections))
+        .route("/chain-info", get(get_chain_info))
         // NFT endpoints (public - wallet-based authentication)
-        .route("/mint-nft", post(mint_nft))
         .route("/initiate-social-media-nft-mint", post(initiate_social_media_nft_mint))
-        .route("/mint-social-media-nft", post(mint_social_media_nft))
         .route("/list-nft", post(list_nft))
         .route("/list-social-media-nft", post(list_social_media_nft))
         .route("/list-nft-for-auction", post(list_nft_for_auction))

@@ -1570,6 +1570,7 @@ impl ReadOnlyContractClient {
 
         Ok(Collection {
             collection_id,
+            chain_id: self.chain_config.chain_id,
             name: name.into(),
             symbol: symbol.into(),
             image: image.into(),

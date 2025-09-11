@@ -98,12 +98,31 @@ pub async fn revoke_token_handler(
 ) -> ApiResult<Json<RevokeTokenResponse>> {
     app_state.auth_service.revoke_token(&request.refresh_token)
         .await
-        .map_err(|e| ApiError::InternalServerError(format!("Token revocation failed: {}", e)))?;
+        .map_err(|e| {
+            match e {
+                ServiceError::InvalidRefreshToken => {
+                    ApiError::Unauthorized("Invalid refresh token".to_string())
+                }
+                _ => ApiError::InternalServerError(format!("Token revocation failed: {}", e))
+            }
+        })?;
 
     info!("Token revoked successfully");
-    Ok(Json(RevokeTokenResponse {
-        message: "Token revoked successfully".to_string(),
-    }))
+    Ok(Json(RevokeTokenResponse { message: "Token revoked successfully".to_string() }))
+}
+
+pub async fn logout_all_sessions_handler(
+    State(app_state): State<AppState>,
+    AuthenticatedUser { user_id, .. }: AuthenticatedUser,
+) -> ApiResult<Json<RevokeTokenResponse>> {
+    app_state.auth_service.revoke_all_user_tokens(&user_id.to_string())
+        .await
+        .map_err(|e| {
+            ApiError::InternalServerError(format!("Failed to logout all sessions: {}", e))
+        })?;
+
+    info!("All sessions logged out for user: {}", user_id);
+    Ok(Json(RevokeTokenResponse { message: "All sessions logged out successfully".to_string() }))
 }
 
 pub async fn revoke_all_tokens_handler(

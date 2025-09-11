@@ -6,6 +6,7 @@ pub mod addresses;
 pub mod client;
 pub mod admin_client;
 pub mod types;
+pub mod event_utils;
 pub mod config;
 pub mod utils;
 

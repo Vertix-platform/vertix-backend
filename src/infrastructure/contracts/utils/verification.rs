@@ -43,12 +43,8 @@ impl VerificationService {
         let verification_address = private_key.address();
 
         // Get Pinata JWT from environment
-        // let pinata_jwt = std::env::var("PINATA_JWT")
-        //     .map_err(|_| ContractError::ContractCallError("PINATA_JWT environment variable not set".to_string()))?;
-        let pinata_jwt = std::env::var("PINATA_JWT").unwrap_or_else(|_| {
-            println!("   PINATA_JWT not set, using test mode");
-            "test_jwt".to_string()
-        });
+        let pinata_jwt = std::env::var("PINATA_JWT")
+            .map_err(|_| ContractError::ContractCallError("PINATA_JWT environment variable not set".to_string()))?;
 
         Ok(Self {
             private_key,
@@ -59,7 +55,6 @@ impl VerificationService {
 
     /// Upload metadata to Pinata IPFS using v3 API
     async fn upload_metadata_to_pinata(&self, metadata: &serde_json::Value, social_media_id: &str) -> Result<String, ContractError> {
-        // Check if we're in test mode (using test JWT)
         if self.pinata_jwt == "test_jwt" {
             // Generate a mock IPFS hash for testing
             let metadata_string = serde_json::to_string(metadata)

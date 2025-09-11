@@ -1,4 +1,4 @@
-pub mod blockchain_listener;
+pub mod multi_chain_listener;
 pub mod job_queue;
 pub mod ipfs_manager;
 
@@ -6,17 +6,15 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, error};
 use sqlx::PgPool;
-use crate::infrastructure::contracts::client::ContractClient;
-use crate::infrastructure::repositories::blockchain_events_repository::BlockchainEventsRepository;
 
 use self::{
-    blockchain_listener::BlockchainListener,
+    multi_chain_listener::MultiChainListener,
     job_queue::{JobQueue, JobType},
     ipfs_manager::IPFSManager,
 };
 
 pub struct WorkerManager {
-    blockchain_listener: Option<Arc<RwLock<BlockchainListener>>>,
+    blockchain_listener: Option<Arc<RwLock<MultiChainListener>>>,
     job_queue: Option<JobQueue>,
     ipfs_manager: Option<IPFSManager>,
     running: bool,
@@ -34,7 +32,6 @@ impl WorkerManager {
 
     pub async fn start(
         &mut self,
-        contract_client: ContractClient,
         db_pool: PgPool,
         pinata_jwt: String,
         ipfs_gateway: String,
@@ -56,16 +53,11 @@ impl WorkerManager {
         ipfs_manager.start().await?;
         self.ipfs_manager = Some(ipfs_manager);
 
-        // Start blockchain listener (if provider is available)
-        let provider = contract_client.get_provider();
-        let blockchain_events_repository = BlockchainEventsRepository::new(db_pool.clone());
-        let blockchain_listener = BlockchainListener::new(
-            provider,
-            contract_client,
-            db_pool,
+        // Start multi-chain blockchain listener
+        let blockchain_listener = MultiChainListener::new(
+            db_pool.clone(),
             tokio::time::Duration::from_secs(15), // Poll every 15 seconds
-            blockchain_events_repository,
-        );
+        )?;
 
         let blockchain_listener = Arc::new(RwLock::new(blockchain_listener));
         let blockchain_listener_clone = blockchain_listener.clone();

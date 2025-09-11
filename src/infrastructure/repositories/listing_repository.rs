@@ -1,6 +1,7 @@
 use sqlx::PgPool;
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
+use hex;
 
 // Data models for listings
 #[derive(sqlx::FromRow, Debug, Clone)]
@@ -73,6 +74,7 @@ pub struct CombinedListingData {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Clone)]
 pub struct ListingRepository {
     pool: PgPool,
 }
@@ -546,5 +548,105 @@ impl ListingRepository {
             .collect();
 
         Ok(combined_listings)
+    }
+
+    // Blockchain event handling methods
+    pub async fn create_nft_listing_from_event(
+        &self,
+        chain_id: u64,
+        listing_id: u64,
+        nft_contract: &str,
+        token_id: u64,
+        seller_address: &str,
+        price: u128,
+        tx_hash: &[u8; 32],
+        block_number: u64,
+    ) -> Result<(), sqlx::Error> {
+        let tx_hash_hex = format!("0x{}", hex::encode(tx_hash));
+        
+        sqlx::query(
+            r#"
+            INSERT INTO nft_listings (
+                id, listing_id, chain_id, creator_address, nft_contract, token_id, 
+                price, description, active, is_auction, transaction_hash, block_number, 
+                created_at, updated_at, status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW(), 'active')
+            ON CONFLICT (listing_id, chain_id) DO UPDATE SET
+                status = 'active',
+                updated_at = NOW()
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(listing_id as i64)
+        .bind(chain_id as i64)
+        .bind(seller_address)
+        .bind(nft_contract)
+        .bind(token_id as i64)
+        .bind(price.to_string())
+        .bind("NFT Listing") // Default description
+        .bind(true) // active
+        .bind(false) // is_auction
+        .bind(tx_hash_hex)
+        .bind(block_number as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn mark_nft_listing_sold(
+        &self,
+        chain_id: u64,
+        listing_id: u64,
+        buyer_address: &str,
+        _sale_price: u128,
+        tx_hash: &[u8; 32],
+        _block_number: u64,
+    ) -> Result<(), sqlx::Error> {
+        let tx_hash_hex = format!("0x{}", hex::encode(tx_hash));
+        
+        sqlx::query(
+            r#"
+            UPDATE nft_listings 
+            SET status = 'sold', active = false, sold_at = NOW(), 
+                buyer_address = $1, sale_transaction_hash = $2, sale_block_number = $3,
+                updated_at = NOW()
+            WHERE listing_id = $4 AND chain_id = $5
+            "#,
+        )
+        .bind(buyer_address)
+        .bind(tx_hash_hex)
+        .bind(_block_number as i64)
+        .bind(listing_id as i64)
+        .bind(chain_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn mark_nft_listing_cancelled(
+        &self,
+        chain_id: u64,
+        listing_id: u64,
+        _seller_address: &str,
+        _tx_hash: &[u8; 32],
+        _block_number: u64,
+    ) -> Result<(), sqlx::Error> {
+        let _tx_hash_hex = format!("0x{}", hex::encode(_tx_hash));
+
+        sqlx::query(
+            r#"
+            UPDATE nft_listings 
+            SET status = 'cancelled', active = false, updated_at = NOW()
+            WHERE listing_id = $1 AND chain_id = $2
+            "#,
+        )
+        .bind(listing_id as i64)
+        .bind(chain_id as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 }

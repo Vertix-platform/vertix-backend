@@ -12,6 +12,10 @@ path = "src/bin/main.rs"
 name = "test_runner"
 path = "src/bin/test_runner.rs"
 
+[[bin]]
+name = "test_multi_chain_listener"
+path = "src/bin/test_multi_chain_listener.rs"
+
 [dependencies]
 axum = "0.8.4"          # Web framework
 tokio = { version = "1.35.1", features = ["full"] } # Async runtime
@@ -33,6 +37,7 @@ dotenv = "0.15.0"
 ethers-core = "2.0.14"
 ethers = {version = "2.0.14", features = ["legacy", "abigen"] }
 hex = "0.4.3"
+sha3 = "0.10.8"
 redis = "0.21"
 dns-lookup = "1.0"
 trust-dns-resolver = "0.23.2"

@@ -266,6 +266,15 @@ impl AuthService {
         Ok(())
     }
 
+    // pub async fn cleanup_old_sessions(&self, user_id: &str) -> Result<u64, ServiceError> {
+    //     let _user_uuid = Uuid::parse_str(user_id)
+    //         .map_err(|_| ServiceError::InvalidCredentials)?;
+
+    //     // Use the repository method instead of direct pool access
+    //     let result = self.refresh_token_repo.cleanup_expired_tokens().await?;
+    //     Ok(result)
+    // }
+
     pub fn hash_password(&self, password: &str) -> Result<String, ServiceError> {
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
@@ -289,17 +298,19 @@ impl AuthService {
         let user_uuid = Uuid::parse_str(user_id)
             .map_err(|_| ServiceError::InvalidCredentials)?;
         let active_count = self.refresh_token_repo.get_active_token_count(user_uuid).await?;
+
         if active_count >= 5 {
-            return Err(ServiceError::TooManyActiveSessions);
+            // Instead of failing, revoke the oldest session and continue
+            self.refresh_token_repo.revoke_oldest_session(user_uuid).await?;
         }
 
         // Generate access token (short-lived: 15 minutes)
         let access_token = self.generate_access_token(user_id)?;
-        
+
         // Generate refresh token (long-lived: 30 days)
         let refresh_token = self.generate_refresh_token()?;
         let family_id = Uuid::new_v4();
-        
+
         // Store refresh token in database
         let expires_at = Utc::now() + Duration::days(30);
         self.refresh_token_repo.create_refresh_token(

@@ -133,7 +133,7 @@ impl ContractService {
 
     /// Create a collection (requires wallet connection only)
     pub async fn create_collection(&self, wallet_address: String, request: CreateCollectionRequest) -> Result<CreateCollectionResponse, ContractError> {
-        // Verify wallet connection
+        // TODO: Fix wallet validation - currently comparing with hardcoded backend wallet
         self.verify_wallet_connection(&wallet_address).await?;
 
         // Verify wallet has sufficient balance for gas
@@ -146,7 +146,7 @@ impl ContractService {
 
     /// Mint an NFT to a collection (requires wallet connection only)
     pub async fn mint_nft_to_collection(&self, wallet_address: String, request: MintNftToCollectionRequest) -> Result<MintNftToCollectionResponse, ContractError> {
-        // Verify wallet connection
+        // TODO: Fix wallet validation - currently comparing with hardcoded backend wallet
         self.verify_wallet_connection(&wallet_address).await?;
 
         // Verify wallet has sufficient balance for gas
@@ -159,7 +159,7 @@ impl ContractService {
 
     /// Mint an NFT (requires wallet connection only)
     pub async fn mint_nft(&self, wallet_address: String, request: MintNftRequest) -> Result<MintNftResponse, ContractError> {
-        // Verify wallet connection
+        // TODO: Fix wallet validation - currently comparing with hardcoded backend wallet
         self.verify_wallet_connection(&wallet_address).await?;
 
         // Verify wallet has sufficient balance for gas
@@ -171,7 +171,7 @@ impl ContractService {
     }
 
     pub async fn mint_social_media_nft(&self, wallet_address: String, request: MintSocialMediaNftRequest) -> Result<MintSocialMediaNftResponse, ContractError> {
-        // Verify wallet connection
+        // TODO: Fix wallet validation - currently comparing with hardcoded backend wallet
         self.verify_wallet_connection(&wallet_address).await?;
 
         // Verify wallet has sufficient balance for gas

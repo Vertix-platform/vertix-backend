@@ -37,6 +37,7 @@ pub struct UpdateProfileRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Collection {
     pub collection_id: u64,
+    pub chain_id: u64,
     pub name: Arc<str>,
     pub symbol: Arc<str>,
     pub image: Arc<str>,

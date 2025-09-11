@@ -5,7 +5,7 @@ use tracing_subscriber;
 
 use vertix_backend::infrastructure::db::postgres::init_pool;
 use vertix_backend::handlers::routes::create_router;
-// use vertix_backend::infrastructure::workers::WorkerManager;
+use vertix_backend::infrastructure::workers::WorkerManager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -23,21 +23,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         e
     })?;
 
-    // TODO: Initialize worker manager - commented out for later use
-    // let mut worker_manager = WorkerManager::new();
+    // Initialize worker manager
+    let mut worker_manager = WorkerManager::new();
 
     // Get environment variables for workers
-    // let pinata_jwt = std::env::var("PINATA_JWT").unwrap_or_else(|_| "test_jwt".to_string());
-    // let ipfs_gateway = std::env::var("IPFS_GATEWAY").unwrap_or_else(|_| "https://gateway.pinata.cloud".to_string());
+    let pinata_jwt = std::env::var("PINATA_JWT").map_err(|e| {
+        error!("Failed to get PINATA_JWT: {}", e);
+        e
+    })?;
+    let ipfs_gateway = std::env::var("IPFS_GATEWAY").map_err(|e| {
+        error!("Failed to get IPFS_GATEWAY: {}", e);
+        e
+    })?;
 
-    // TODO: Initialize contract client for blockchain listener
-    // For now, we'll start without blockchain listener
-    // if let Err(e) = worker_manager.start_without_blockchain(pool.clone(), pinata_jwt, ipfs_gateway).await {
-    //     error!("Failed to start worker manager: {}", e);
-    //     // Continue without workers for now
-    // } else {
-    //     info!("Worker manager started successfully");
-    // }
+    // Start worker manager with blockchain listener
+    if let Err(e) = worker_manager.start(pool.clone(), pinata_jwt, ipfs_gateway).await {
+        error!("Failed to start worker manager: {}", e);
+        // Continue without workers for now
+    } else {
+        info!("Worker manager started successfully");
+    }
 
     // Create router
     let app = create_router(pool).await;
