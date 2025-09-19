@@ -27,7 +27,7 @@ async fn health_check() -> &'static str {
 
 pub fn create_v1_router(app_state: AppState) -> Router {
     let allowed_origins = std::env::var("ALLOWED_ORIGINS")
-        .unwrap_or_else(|_| "http://localhost:3000,http://0.0.0.0:3000".to_string())
+        .unwrap_or_else(|_| "http://localhost:3000,http://0.0.0.0:3000,https://vertix-app.vercel.app".to_string())
         .split(',')
         .map(|origin| origin.trim().parse::<HeaderValue>().unwrap())
         .collect::<Vec<_>>();
