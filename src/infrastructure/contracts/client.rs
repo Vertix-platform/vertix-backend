@@ -1577,6 +1577,8 @@ impl ReadOnlyContractClient {
             max_supply: max_supply.as_u128() as u16,
             creator: format!("{:?}", creator).into(),
             current_supply: current_supply.as_u128() as u16,
+            total_volume_wei: None, // Not available from contract call
+            floor_price_wei: None, // Not available from contract call
         })
     }
 

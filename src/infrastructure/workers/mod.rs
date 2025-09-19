@@ -56,7 +56,6 @@ impl WorkerManager {
         // Start multi-chain blockchain listener
         let blockchain_listener = MultiChainListener::new(
             db_pool.clone(),
-            tokio::time::Duration::from_secs(15), // Poll every 15 seconds
         )?;
 
         let blockchain_listener = Arc::new(RwLock::new(blockchain_listener));

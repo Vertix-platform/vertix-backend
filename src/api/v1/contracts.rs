@@ -1,16 +1,16 @@
 use axum::{
-    extract::{State},
+    extract::{Query, State, Path},
     Json,
     response::IntoResponse,
 };
 
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::collections::HashMap;
 use crate::{
     domain::models::{
         InitiateSocialMediaNftMintRequest,
         MintSocialMediaNftRequest,
-        ListNftRequest,
         ListNonNftAssetRequest,
         ListNftForAuctionRequest,
         BuyNftRequest, BuyNonNftAssetRequest,
@@ -27,9 +27,41 @@ use crate::{
 };
 use crate::infrastructure::contracts::{config, types};
 use crate::infrastructure::repositories::collections_repository::CollectionsRepository;
+use crate::infrastructure::repositories::nft_events_repository::NftEventsRepository;
+use crate::infrastructure::repositories::nft_listing_events_repository::NftListingEventsRepository;
 use crate::domain::models::Collection;
 
 use std::sync::Arc;
+use reqwest;
+use serde_json::Value as JsonValue;
+
+/// Fetch metadata from IPFS
+async fn fetch_ipfs_metadata(ipfs_uri: &str) -> Result<JsonValue, ApiError> {
+    // Convert IPFS URI to HTTP URL
+    let http_url = if ipfs_uri.starts_with("ipfs://") {
+        let hash = &ipfs_uri[7..]; // Remove "ipfs://" prefix
+        format!("https://ipfs.io/ipfs/{}", hash)
+    } else if ipfs_uri.starts_with("https://") {
+        ipfs_uri.to_string()
+    } else {
+        return Err(ApiError::bad_request("Invalid IPFS URI format"));
+    };
+
+    // Fetch metadata from IPFS
+    let response = reqwest::get(&http_url)
+        .await
+        .map_err(|e| ApiError::internal_server_error(&format!("Failed to fetch IPFS metadata: {}", e)))?;
+
+    if !response.status().is_success() {
+        return Err(ApiError::internal_server_error(&format!("IPFS request failed with status: {}", response.status())));
+    }
+
+    let metadata: JsonValue = response.json()
+        .await
+        .map_err(|e| ApiError::internal_server_error(&format!("Failed to parse IPFS metadata: {}", e)))?;
+
+    Ok(metadata)
+}
 
 // Helper function to create contract service with current chain configuration
 async fn create_contract_service(db_pool: PgPool) -> Result<ContractService, ApiError> {
@@ -55,27 +87,6 @@ pub struct ApiResponse<T> {
 }
 
 
-#[derive(Debug, Deserialize)]
-pub struct ListNftApiRequest {
-    pub wallet_address: String,
-    pub nft_contract: String,
-    pub token_id: u64,
-    pub price: String,
-    pub description: String,
-}
-
-impl Validate for ListNftApiRequest {
-    fn validate(&self) -> ValidationResult<()> {
-        let results = vec![
-            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
-            Validator::validate_ethereum_address(&self.nft_contract, "nft_contract"),
-            Validator::validate_numeric_string(&self.price, "price"),
-            Validator::validate_string(&self.description, "description", 1, 1000),
-        ];
-
-        Validator::combine_results(results)
-    }
-}
 
 #[derive(Debug, Deserialize)]
 pub struct BuyNftApiRequest {
@@ -313,6 +324,31 @@ impl Validate for InitiateSocialMediaNftMintApiRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct MintNftApiRequest {
+    pub wallet_address: String,
+    pub token_uri: String,
+    pub metadata_hash: String,
+    pub collection_id: Option<u64>,
+    pub royalty_bps: Option<u16>,
+}
+
+impl Validate for MintNftApiRequest {
+    fn validate(&self) -> ValidationResult<()> {
+        let mut results = vec![
+            Validator::validate_ethereum_address(&self.wallet_address, "wallet_address"),
+            Validator::validate_ipfs_uri(&self.token_uri, "token_uri"),
+            Validator::validate_hex_string(&self.metadata_hash, "metadata_hash", Some(64)),
+        ];
+
+        if let Some(royalty) = self.royalty_bps {
+            results.push(Validator::validate_basis_points(royalty, "royalty_bps"));
+        }
+
+        Validator::combine_results(results)
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct MintSocialMediaNftApiRequest {
     pub wallet_address: String,
     pub social_media_id: String,
@@ -457,12 +493,17 @@ pub async fn mint_social_media_nft(
 /// Get all collections from the database (populated by blockchain events)
 pub async fn get_all_collections(
     State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> ApiResult<impl IntoResponse> {
     // Use collections repository to get collections from database
     let collections_repository = CollectionsRepository::new(state.pool);
 
-    match collections_repository.get_all_collections().await {
-        Ok(collections) => {
+    // Parse pagination parameters
+    let limit = params.get("limit").and_then(|s| s.parse::<i64>().ok());
+    let offset = params.get("offset").and_then(|s| s.parse::<i64>().ok());
+
+    match collections_repository.get_collections_paginated(limit, offset).await {
+        Ok((collections, total_count)) => {
             // Convert database collections to API response format
             let api_collections: Vec<Collection> = collections
                 .into_iter()
@@ -475,12 +516,19 @@ pub async fn get_all_collections(
                     max_supply: db_collection.max_supply as u16,
                     creator: Arc::from(db_collection.creator_address),
                     current_supply: db_collection.current_supply as u16,
+                    total_volume_wei: db_collection.total_volume_wei,
+                    floor_price_wei: db_collection.floor_price_wei,
                 })
                 .collect();
 
             Ok(Json(serde_json::json!({
                 "success": true,
-                "data": api_collections,
+                "data": {
+                    "collections": api_collections,
+                    "total_count": total_count,
+                    "limit": limit.unwrap_or(50),
+                    "offset": offset.unwrap_or(0)
+                },
                 "message": "Collections retrieved successfully"
             })))
         }
@@ -488,6 +536,526 @@ pub async fn get_all_collections(
             Err(ApiError::internal_server_error(&format!("Database error: {}", e)))
         }
     }
+}
+
+/// Helper function to get collection name from collection_id
+async fn get_collection_name_from_id(collection_id: Option<u64>, pool: &sqlx::PgPool) -> Option<String> {
+    if let Some(id) = collection_id {
+        match sqlx::query_scalar::<_, String>(
+            "SELECT name FROM collections WHERE collection_id = $1"
+        )
+        .bind(id as i64)
+        .fetch_optional(pool)
+        .await {
+            Ok(Some(name)) => Some(name),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!("Failed to fetch collection name for id {}: {}", id, e);
+                None
+            }
+        }
+    } else {
+        None
+    }
+}
+
+/// Determine asset type based on contract address and metadata
+fn determine_asset_type(nft_contract: &str, metadata: &Option<serde_json::Value>) -> (u8, String) {
+    // Check if this is a social media NFT based on metadata
+    if let Some(meta) = metadata {
+        if let Some(platform) = meta.get("platform").and_then(|v| v.as_str()) {
+            match platform.to_lowercase().as_str() {
+                "twitter" | "x" => return (1, "Social Media".to_string()),
+                "instagram" => return (1, "Social Media".to_string()),
+                "tiktok" => return (1, "Social Media".to_string()),
+                "youtube" => return (1, "Social Media".to_string()),
+                "facebook" => return (1, "Social Media".to_string()),
+                "linkedin" => return (1, "Social Media".to_string()),
+                _ => {}
+            }
+        }
+
+        // Check for website indicators (only if it's not a marketplace URL)
+        if let Some(external_url) = meta.get("external_url").and_then(|v| v.as_str()) {
+            if external_url.starts_with("http") && !external_url.contains("twitter.com") && 
+               !external_url.contains("instagram.com") && !external_url.contains("tiktok.com") &&
+               !external_url.contains("vertix.market") && !external_url.contains("opensea.io") &&
+               !external_url.contains("foundation.app") && !external_url.contains("superrare.co") {
+                return (2, "Website".to_string());
+            }
+        }
+
+        // Check for domain indicators
+        if let Some(domain) = meta.get("domain").and_then(|v| v.as_str()) {
+            if domain.contains(".") && !domain.contains("twitter") && !domain.contains("instagram") {
+                return (3, "Domain".to_string());
+            }
+        }
+
+        // Check for application indicators
+        if let Some(application) = meta.get("application").and_then(|v| v.as_str()) {
+            match application.to_lowercase().as_str() {
+                "mobile_app" | "software" => return (5, "Application".to_string()),
+                _ => {}
+            }
+        }
+
+        // Check for youtube indicators
+        if let Some(youtube) = meta.get("youtube").and_then(|v| v.as_str()) {
+            match youtube.to_lowercase().as_str() {
+                "youtube" => return (6, "YouTube".to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    // Check contract-specific patterns (you can expand this based on known contract addresses)
+    match nft_contract.to_lowercase().as_str() {
+        // Known Vertix NFT contract
+        "0xf99c6514473ba9ef1c930837e1ff4eac19d2537b" => {
+            // Check if this is a social media NFT based on metadata patterns
+            if let Some(meta) = metadata {
+                if let Some(name) = meta.get("name").and_then(|v| v.as_str()) {
+                    let name_lower = name.to_lowercase();
+                    if name_lower.contains("twitter") || name_lower.contains("instagram") || 
+                       name_lower.contains("tiktok") || name_lower.contains("youtube") {
+                        return (1, "Social Media".to_string());
+                    }
+                }
+            }
+            (0, "NFT".to_string()) // Default to NFT for this contract
+        },
+        // Add more known contract addresses here
+        _ => (0, "NFT".to_string()) // Default to NFT
+    }
+}
+
+/// Get all active NFT listings in the marketplace
+pub async fn get_all_listings(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> ApiResult<impl IntoResponse> {
+    let limit = params.get("limit")
+        .and_then(|l| l.parse::<i64>().ok())
+        .unwrap_or(100);
+
+    let offset = params.get("offset")
+        .and_then(|o| o.parse::<i64>().ok())
+        .unwrap_or(0);
+
+
+    let min_price = params.get("min_price").and_then(|p| p.parse::<f64>().ok());
+    let max_price = params.get("max_price").and_then(|p| p.parse::<f64>().ok());
+    let is_auction = params.get("is_auction").and_then(|a| a.parse::<bool>().ok());
+    let asset_type = params.get("asset_type").and_then(|a| a.parse::<u8>().ok());
+
+    // Get chain configuration
+    let chain_config = config::get_current_chain_config()
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+
+    let repository = NftListingEventsRepository::new(state.pool.clone());
+    let nft_events_repo = NftEventsRepository::new(state.pool.clone());
+
+    // Convert price filters from ETH to Wei
+    let min_price_wei = min_price.map(|p| (p * 1e18) as u128);
+    let max_price_wei = max_price.map(|p| (p * 1e18) as u128);
+
+    match repository.get_all_active_listings(
+        chain_config.chain_id,
+        Some(limit),
+        Some(offset),
+        asset_type,
+        min_price_wei,
+        max_price_wei,
+        is_auction,
+    ).await {
+        Ok(listings) => {
+            // Fetch metadata for each NFT and enrich the response
+            let mut enriched_listings = Vec::new();
+
+            for listing in listings {
+                // Try to fetch metadata from IPFS if available
+                let mut metadata = None;
+                let mut _nft_event_data = None;
+
+                if !listing.nft_contract.is_empty() {
+                    // Get NFT metadata from the events table using token ID and seller address
+                    if let Ok(Some(nft_event)) = nft_events_repo.get_nft_mint_event_by_token_and_owner(
+                        chain_config.chain_id,
+                        listing.token_id as u64,
+                        &listing.seller_address
+                    ).await {
+                        _nft_event_data = Some(nft_event.clone());
+                        if let Ok(metadata_json) = fetch_ipfs_metadata(&nft_event.token_uri).await {
+                            metadata = Some(metadata_json);
+                        }
+                    }
+                }
+
+                // Determine asset type based on contract and metadata
+                let asset_type = determine_asset_type(&listing.nft_contract, &metadata);
+
+                let enriched_listing = serde_json::json!({
+                    "listing_id": listing.listing_id,
+                    "token_id": listing.token_id,
+                    "seller_address": listing.seller_address,
+                    "price_wei": listing.price_wei,
+                    "is_auction": listing.is_auction,
+                    "auction_end_time": listing.auction_end_time,
+                    // Asset Type Information
+                    "asset_type": asset_type.0, // 0=NFT, 1=Social Media, 2=Website, 3=Domain, 4=Digital Asset
+                    "asset_type_name": asset_type.1,
+                    // Asset Details
+                    "name": metadata.as_ref().and_then(|m| m.get("name").and_then(|v| v.as_str())).unwrap_or(&format!("{} #{}{}", asset_type.1, listing.token_id, if listing.is_auction { " (Auction)" } else { "" })),
+                    "image": metadata.as_ref().and_then(|m| m.get("image").and_then(|v| v.as_str())).unwrap_or("/images/placeholder-nft.svg"),
+                });
+
+                enriched_listings.push(enriched_listing);
+            }
+
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": enriched_listings,
+                "message": "Listings retrieved successfully"
+            })))
+        }
+        Err(e) => {
+            Err(ApiError::internal_server_error(&format!("Failed to fetch listings: {}", e)))
+        }
+    }
+}
+
+/// Get a single listing by ID
+pub async fn get_listing_by_id(
+    Path(listing_id): Path<u64>,
+    State(state): State<AppState>,
+) -> ApiResult<impl IntoResponse> {
+    let chain_config = config::get_current_chain_config()
+        .map_err(|e| ApiError::internal_server_error(&e.to_string()))?;
+
+    let repository = NftListingEventsRepository::new(state.pool.clone());
+    let nft_events_repo = NftEventsRepository::new(state.pool.clone());
+
+    match repository.get_listing_by_id(chain_config.chain_id, listing_id).await {
+        Ok(Some(listing)) => {
+            // Try to fetch metadata from IPFS if available
+            let mut metadata = None;
+            let mut nft_event_data = None;
+
+            if !listing.nft_contract.is_empty() {
+                // Get NFT metadata from the events table using token ID and seller address
+                if let Ok(Some(nft_event)) = nft_events_repo.get_nft_mint_event_by_token_and_owner(
+                    chain_config.chain_id,
+                    listing.token_id as u64,
+                    &listing.seller_address
+                ).await {
+                    nft_event_data = Some(nft_event.clone());
+                    if let Ok(metadata_json) = fetch_ipfs_metadata(&nft_event.token_uri).await {
+                        metadata = Some(metadata_json);
+                    }
+                }
+            }
+
+            // Determine asset type based on contract and metadata
+            let asset_type = determine_asset_type(&listing.nft_contract, &metadata);
+
+            let enriched_listing = serde_json::json!({
+                "listing_id": listing.listing_id,
+                "nft_contract": listing.nft_contract,
+                "token_id": listing.token_id,
+                "seller_address": listing.seller_address,
+                "price_wei": listing.price_wei,
+                "is_auction": listing.is_auction,
+                "auction_end_time": listing.auction_end_time,
+                "reserve_price_wei": listing.reserve_price_wei,
+                "transaction_hash": listing.transaction_hash,
+                "block_number": listing.block_number,
+                "event_type": listing.event_type,
+                "created_at": listing.created_at,
+                // Asset Type Information
+                "asset_type": asset_type.0,
+                "asset_type_name": asset_type.1,
+                // Asset Details
+                "name": metadata.as_ref().and_then(|m| m.get("name").and_then(|v| v.as_str())).unwrap_or(&format!("{} #{}{}", asset_type.1, listing.token_id, if listing.is_auction { " (Auction)" } else { "" })),
+                "description": metadata.as_ref().and_then(|m| m.get("description").and_then(|v| v.as_str())).unwrap_or(&format!("A {} listed on the marketplace", asset_type.1.to_lowercase())),
+                "image": metadata.as_ref().and_then(|m| m.get("image").and_then(|v| v.as_str())).unwrap_or("/images/placeholder-nft.svg"),
+                "external_url": metadata.as_ref().and_then(|m| m.get("external_url").and_then(|v| v.as_str())),
+                "animation_url": metadata.as_ref().and_then(|m| m.get("animation_url").and_then(|v| v.as_str())),
+                "attributes": metadata.as_ref().and_then(|m| m.get("attributes").and_then(|v| v.as_array())).unwrap_or(&vec![]),
+                "collection_name": get_collection_name_from_id(nft_event_data.as_ref().and_then(|e| e.collection_id.map(|id| id as u64)), &state.pool).await,
+                "royalty_recipient": nft_event_data.as_ref().map(|e| e.royalty_recipient.clone()).unwrap_or_default(),
+                "royalty_bps": nft_event_data.as_ref().map(|e| e.royalty_bps).unwrap_or(0),
+                "token_uri": nft_event_data.as_ref().map(|e| e.token_uri.clone()).unwrap_or_default(),
+                "metadata_hash": nft_event_data.as_ref().map(|e| e.metadata_hash.clone()).unwrap_or_default(),
+                "metadata": metadata
+            });
+
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": enriched_listing,
+                "message": "Listing retrieved successfully"
+            })))
+        }
+        Ok(None) => {
+            Err(ApiError::not_found("Listing not found"))
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch listing {}: {}", listing_id, e);
+            Err(ApiError::internal_server_error("Failed to fetch listing"))
+        }
+    }
+}
+
+/// Get NFTs owned by a user
+pub async fn get_user_nfts(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> ApiResult<impl IntoResponse> {
+    let wallet_address = params.get("wallet_address")
+        .ok_or_else(|| ApiError::BadRequest("wallet_address parameter is required".to_string()))?;
+
+    let limit = params.get("limit")
+        .and_then(|l| l.parse::<i64>().ok())
+        .unwrap_or(100);
+
+    let offset = params.get("offset")
+        .and_then(|o| o.parse::<i64>().ok())
+        .unwrap_or(0);
+
+    // Use the NFT events repository to get real data from the database
+    let nft_events_repository = NftEventsRepository::new(state.pool.clone());
+    let collections_repository = CollectionsRepository::new(state.pool.clone());
+    let listing_events_repository = NftListingEventsRepository::new(state.pool.clone());
+
+    match nft_events_repository.get_nft_mint_events_by_address(wallet_address, Some(limit), Some(offset)).await {
+        Ok(nft_events) => {
+            // Get all collections to enhance NFT data
+            let collections = collections_repository.get_all_collections(None, None).await.unwrap_or_default();
+            let collections_map: std::collections::HashMap<i64, _> = collections
+                .into_iter()
+                .map(|c| (c.collection_id, c))
+                .collect();
+
+            // Convert NFT mint events to API response format with real metadata
+            let mut nfts = Vec::new();
+            for event in nft_events {
+                let collection_name = event.collection_id
+                    .and_then(|id| collections_map.get(&id))
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default();
+
+                // Try to fetch real metadata from IPFS if token_uri is available
+                let (name, description, image, metadata_uri) = if !event.token_uri.is_empty() {
+                    match fetch_ipfs_metadata(&event.token_uri).await {
+                        Ok(metadata) => {
+                            // Extract fields from metadata
+                            let name = metadata.get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+
+                            let description = metadata.get("description")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+
+                            let image = metadata.get("image")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+
+                            (name, description, image, event.token_uri.clone())
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to fetch metadata for token {}: {:?}", event.token_id, e);
+                            // Return empty values if metadata fetch fails
+                            (
+                                String::new(),
+                                String::new(),
+                                String::new(),
+                                event.token_uri.clone(),
+                            )
+                        }
+                    }
+                } else {
+                    // No token_uri available, return empty values
+                    (
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                    )
+                };
+
+                // Check if this NFT is currently listed
+                let listing_info = if let Some(collection_id) = event.collection_id {
+                    // For collection NFTs, we need to get the contract address
+                    // For now, we'll use a placeholder - in production, you'd get this from the collection
+                    let nft_contract = format!("0x{:040x}", collection_id); // Placeholder contract address
+                    listing_events_repository.get_active_listing_for_nft(
+                        event.chain_id as u64,
+                        &nft_contract,
+                        event.token_id as u64,
+                    ).await.unwrap_or(None)
+                } else {
+                    None
+                };
+
+                let (is_listed, listing_price, listing_id, is_auction) = if let Some(listing) = listing_info {
+                    (
+                        true,
+                        Some(listing.price_wei),
+                        Some(listing.listing_id),
+                        listing.is_auction,
+                    )
+                } else {
+                    (false, None, None, false)
+                };
+
+                nfts.push(serde_json::json!({
+                    "id": event.id.to_string(),
+                    "token_id": event.token_id,
+                    "collection_id": event.collection_id,
+                    "collection_name": collection_name,
+                    "chain_id": event.chain_id,
+                    "owner": event.to_address,
+                    "transaction_hash": event.transaction_hash,
+                    "block_number": event.block_number,
+                    "minted_at": event.created_at.to_rfc3339(),
+                    "name": name,
+                    "description": description,
+                    "image": image,
+                    "metadata_uri": metadata_uri,
+                    "is_listed": is_listed,
+                    "listing_price": listing_price,
+                    "listing_id": listing_id,
+                    "is_auction": is_auction,
+                    "royalty_bps": event.royalty_bps,
+                }));
+            }
+
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": nfts,
+                "message": format!("Found {} NFTs for address {}", nfts.len(), wallet_address)
+            })))
+        }
+        Err(e) => {
+            tracing::error!("Failed to get NFT mint events: {}", e);
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "data": [],
+                "message": format!("Database error: {}", e)
+            })))
+        }
+    }
+}
+
+/// Get creator dashboard overview stats
+pub async fn get_creator_overview(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> ApiResult<impl IntoResponse> {
+    let wallet_address = params.get("wallet_address")
+        .ok_or_else(|| ApiError::BadRequest("wallet_address parameter is required".to_string()))?;
+
+    // Get repositories
+    let nft_events_repository = NftEventsRepository::new(state.pool.clone());
+    let collections_repository = CollectionsRepository::new(state.pool.clone());
+    let listing_events_repository = NftListingEventsRepository::new(state.pool.clone());
+
+    // Get all collections created by the creator across all chains
+    let collections = collections_repository
+        .get_collections_by_creator(wallet_address)
+        .await
+        .map_err(|e| ApiError::internal_server_error(&format!("Failed to get collections: {}", e)))?;
+
+    let total_collections = collections.len() as u32;
+
+    // Calculate total volume from all collections across all chains
+    let total_volume_wei: u128 = collections
+        .iter()
+        .filter_map(|c| c.total_volume_wei.as_ref())
+        .filter_map(|v| v.parse::<u128>().ok())
+        .sum();
+
+    // Convert wei to ETH (assuming 18 decimals)
+    let total_volume_eth = total_volume_wei as f64 / 1e18;
+
+    // Get total NFTs owned by the creator across all chains
+    let total_nfts = nft_events_repository
+        .get_nft_mint_events_by_address(wallet_address, None, None)
+        .await
+        .map_err(|e| ApiError::internal_server_error(&format!("Failed to get NFTs: {}", e)))?
+        .len() as u32;
+
+    // Get listed NFTs count across all chains
+    let mut total_listed_nfts = 0u32;
+    for collection in &collections {
+        let listed_nfts = listing_events_repository
+            .get_active_listings_for_seller(collection.chain_id as u64, wallet_address, None, None)
+            .await
+            .map_err(|e| ApiError::internal_server_error(&format!("Failed to get listings for chain {}: {}", collection.chain_id, e)))?;
+        total_listed_nfts += listed_nfts.len() as u32;
+    }
+
+    // Get recent activity (last 10 NFT events across all chains)
+    let recent_nfts = nft_events_repository
+        .get_nft_mint_events_by_address(wallet_address, Some(10), Some(0))
+        .await
+        .map_err(|e| ApiError::internal_server_error(&format!("Failed to get recent NFTs: {}", e)))?;
+
+    let recent_activity: Vec<serde_json::Value> = recent_nfts
+        .into_iter()
+        .map(|nft| {
+            serde_json::json!({
+                "id": nft.id.to_string(),
+                "type": "mint",
+                "nftName": format!("Token #{}", nft.token_id),
+                "timestamp": nft.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+                "collectionId": nft.collection_id,
+                "tokenId": nft.token_id,
+                "chainId": nft.chain_id
+            })
+        })
+        .collect();
+
+    // Get chain-specific breakdown
+    let chain_breakdown: Vec<serde_json::Value> = collections
+        .iter()
+        .map(|collection| {
+            serde_json::json!({
+                "chainId": collection.chain_id,
+                "collectionId": collection.collection_id,
+                "name": collection.name,
+                "totalVolume": collection.total_volume_wei.as_ref()
+                    .and_then(|v| v.parse::<u128>().ok())
+                    .map(|wei| wei as f64 / 1e18)
+                    .unwrap_or(0.0),
+                "floorPrice": collection.floor_price_wei.as_ref()
+                    .and_then(|v| v.parse::<u128>().ok())
+                    .map(|wei| wei as f64 / 1e18)
+                    .unwrap_or(0.0),
+                "currentSupply": collection.current_supply,
+                "maxSupply": collection.max_supply
+            })
+        })
+        .collect();
+
+    let overview_data = serde_json::json!({
+        "totalNfts": total_nfts,
+        "totalCollections": total_collections,
+        "listedNfts": total_listed_nfts,
+        "totalVolume": total_volume_eth,
+        "recentActivity": recent_activity,
+        "chainBreakdown": chain_breakdown
+    });
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": overview_data,
+        "message": "Creator overview retrieved successfully"
+    })))
 }
 
 /// Get current chain configuration and contract addresses
@@ -523,36 +1091,6 @@ pub async fn get_chain_info(
     })))
 }
 
-/// List an NFT for sale (wallet-only operation)
-pub async fn list_nft(
-    State(state): State<AppState>,
-    Json(request): Json<ListNftApiRequest>,
-) -> ApiResult<impl IntoResponse> {
-    // Validate request
-    request.validate().map_err(|errors| ApiError::from_validation_errors(errors))?;
-
-    let contract_service = create_contract_service(state.pool).await?;
-
-    let list_request = ListNftRequest {
-        nft_contract: request.nft_contract.into(),
-        token_id: request.token_id,
-        price: request.price.parse().unwrap_or(0),
-        description: request.description.into(),
-    };
-
-    match contract_service.list_nft(request.wallet_address, list_request).await {
-        Ok(response) => {
-            Ok(Json(serde_json::json!({
-                "success": true,
-                "data": response,
-                "message": "NFT listed successfully"
-            })))
-        }
-        Err(e) => {
-            Err(ApiError::internal_server_error(&e.to_string()))
-        }
-    }
-}
 
 /// List a non-NFT asset for sale (requires user authentication + wallet connection)
 pub async fn list_non_nft_asset(

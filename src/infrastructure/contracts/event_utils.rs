@@ -21,6 +21,10 @@ pub mod event_signatures {
     /// SocialMediaNFTMinted event signature
     pub const SOCIAL_MEDIA_NFT_MINTED: &str = "SocialMediaNFTMinted(address,uint256,string,string,bytes32,address,uint96)";
 
+    /// NFTListed event signature
+    pub const NFT_LISTED: &str = "NFTListed(address,uint256,uint256,string,bytes32,address,uint96)";
+
+
     /// Get the calculated signature for CollectionCreated
     pub fn collection_created() -> String {
         calculate_event_signature(COLLECTION_CREATED)
@@ -36,12 +40,18 @@ pub mod event_signatures {
         calculate_event_signature(SOCIAL_MEDIA_NFT_MINTED)
     }
 
+    /// Get the calculated signature for NFTListed
+    pub fn nft_listed() -> String {
+        calculate_event_signature(NFT_LISTED)
+    }
+
     /// Get all known event signatures
     pub fn all_signatures() -> Vec<(String, &'static str)> {
         vec![
             (collection_created(), COLLECTION_CREATED),
             (nft_minted(), NFT_MINTED),
             (social_media_nft_minted(), SOCIAL_MEDIA_NFT_MINTED),
+            (nft_listed(), NFT_LISTED),
         ]
     }
 }

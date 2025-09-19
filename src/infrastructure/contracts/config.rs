@@ -123,7 +123,7 @@ fn get_anvil_config() -> Result<ChainConfig, ContractError> {
         chain_type: ChainType::Polygon, // Using Polygon type for compatibility
         name: "Anvil Local".to_string(),
         rpc_url: std::env::var("RPC_URL").unwrap_or_else(|_| "http://localhost:8545".to_string()),
-        ws_url: None,
+        ws_url: std::env::var("ANVIL_WS_URL").ok(),
         explorer_url: "".to_string(),
         native_currency: NativeCurrency {
             name: "Ether".to_string(),
@@ -147,12 +147,13 @@ fn get_base_sepolia_config() -> Result<ChainConfig, ContractError> {
         chain_type: ChainType::Base,
         name: "Base Sepolia".to_string(),
         rpc_url: std::env::var("BASE_SEPOLIA_RPC_URL").unwrap_or_else(|_| "https://sepolia.base.org".to_string()),
-        ws_url: None,
+        ws_url: Some(std::env::var("BASE_SEPOLIA_WS_URL").unwrap_or_else(|_| "wss://base-rpc.publicnode.com".to_string())),
         explorer_url: "https://sepolia.basescan.org".to_string(),
         native_currency: NativeCurrency {
             name: "Ether".to_string(),
             symbol: "ETH".to_string(),
             decimals: 18,
+
         },
         gas_settings: GasSettings {
             default_gas_limit: 300000,

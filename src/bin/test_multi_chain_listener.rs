@@ -32,6 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info!("       - VertixNFT: {:?}", chain.contract_addresses.vertix_nft);
                 info!("       - VertixEscrow: {:?}", chain.contract_addresses.vertix_escrow);
                 info!("       - VertixGovernance: {:?}", chain.contract_addresses.vertix_governance);
+                info!("       - MarketplaceProxy: {:?}", chain.contract_addresses.marketplace_proxy);
                 info!("");
             }
         }
@@ -80,6 +81,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    match sqlx::query("SELECT COUNT(*) FROM nft_listing_events").fetch_one(&pool).await {
+        Ok(_) => info!("NFT listing events table accessible"),
+        Err(e) => {
+            error!("NFT listing events table error: {}", e);
+            return Err(e.into());
+        }
+    }
+
     match sqlx::query("SELECT COUNT(*) FROM social_media_nft_events").fetch_one(&pool).await {
         Ok(_) => info!("Social media NFT events table accessible"),
         Err(e) => {
@@ -90,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test 4: Initialize multi-chain listener
     info!("Test 4: Testing multi-chain listener initialization...");
-    match MultiChainListener::new(pool, tokio::time::Duration::from_secs(15)) {
+    match MultiChainListener::new(pool) {
         Ok(listener) => {
             info!("Multi-chain listener initialized successfully");
             info!("   Active chain IDs: {:?}", listener.get_active_chain_ids());

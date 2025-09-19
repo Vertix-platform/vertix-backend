@@ -456,6 +456,7 @@ impl AuthService {
             .add_scope(Scope::new("email".to_string()))
             .add_scope(Scope::new("profile".to_string()))
             .set_pkce_challenge(pkce_code_challenge)
+            .add_extra_param("prompt", "select_account")
             .url();
 
         (auth_url.to_string(), csrf_token)

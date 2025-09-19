@@ -16,6 +16,8 @@ pub struct Collection {
     pub creator_address: String,
     pub transaction_hash: String,
     pub block_number: i64,
+    pub total_volume_wei: Option<String>,
+    pub floor_price_wei: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -30,6 +32,10 @@ impl CollectionsRepository {
         Self { pool }
     }
 
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
     /// Store collection in the database
     pub async fn store_collection(
         &self,
@@ -37,7 +43,7 @@ impl CollectionsRepository {
         chain_id: u64,
         name: &str,
         symbol: &str,
-        image: Option<&str>,
+        image: &str,
         max_supply: u64,
         current_supply: u64,
         creator_address: Address,
@@ -79,26 +85,49 @@ impl CollectionsRepository {
         Ok(())
     }
 
-    /// Get all collections
-    pub async fn get_all_collections(&self) -> Result<Vec<Collection>, sqlx::Error> {
+    /// Get all collections with pagination
+    pub async fn get_all_collections(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Collection>, sqlx::Error> {
+        let limit = limit.unwrap_or(50); // Default limit of 50
+        let offset = offset.unwrap_or(0);
+
         let collections = sqlx::query_as::<_, Collection>(
             r#"
-            SELECT id, collection_id, chain_id, name, symbol, image, max_supply, current_supply, creator_address, transaction_hash, block_number, created_at, updated_at
+            SELECT id, collection_id, chain_id, name, symbol, image, max_supply, current_supply, creator_address, transaction_hash, block_number, total_volume_wei::TEXT, floor_price_wei::TEXT, created_at, updated_at
             FROM collections
             ORDER BY created_at DESC
+            LIMIT $1 OFFSET $2
             "#,
         )
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await?;
 
         Ok(collections)
     }
 
+    /// Get total count of collections
+    pub async fn get_collections_count(&self) -> Result<i64, sqlx::Error> {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM collections")
+            .fetch_one(&self.pool)
+            .await?;
+
+        Ok(count.0)
+    }
+
+    /// Get collections with pagination and total count
+    pub async fn get_collections_paginated(&self, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<Collection>, i64), sqlx::Error> {
+        let collections = self.get_all_collections(limit, offset).await?;
+        let total_count = self.get_collections_count().await?;
+        
+        Ok((collections, total_count))
+    }
+
     /// Get collection by ID
     pub async fn get_collection_by_id(&self, collection_id: u64) -> Result<Option<Collection>, sqlx::Error> {
         let collection = sqlx::query_as::<_, Collection>(
             r#"
-            SELECT id, collection_id, chain_id, name, symbol, image, max_supply, current_supply, creator_address, transaction_hash, block_number, created_at, updated_at
+            SELECT id, collection_id, chain_id, name, symbol, image, max_supply, current_supply, creator_address, transaction_hash, block_number, total_volume_wei::TEXT, floor_price_wei::TEXT, created_at, updated_at
             FROM collections
             WHERE collection_id = $1
             "#,
@@ -114,7 +143,7 @@ impl CollectionsRepository {
     pub async fn get_collections_by_creator(&self, creator_address: &str) -> Result<Vec<Collection>, sqlx::Error> {
         let collections = sqlx::query_as::<_, Collection>(
             r#"
-            SELECT id, collection_id, chain_id, name, symbol, image, max_supply, current_supply, creator_address, transaction_hash, block_number, created_at, updated_at
+            SELECT id, collection_id, chain_id, name, symbol, image, max_supply, current_supply, creator_address, transaction_hash, block_number, total_volume_wei::TEXT, floor_price_wei::TEXT, created_at, updated_at
             FROM collections
             WHERE creator_address = $1
             ORDER BY created_at DESC

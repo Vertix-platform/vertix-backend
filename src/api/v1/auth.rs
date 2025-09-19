@@ -1,13 +1,14 @@
 use axum::{
     extract::{Query, State},
+    response::IntoResponse,
     Json,
 };
 use tracing::info;
 
 use crate::api::dto::{
-    RegisterRequest, LoginRequest, LoginResponse, GoogleCallbackQuery, 
-    GoogleAuthResponse, ConnectWalletRequest, NonceRequest, NonceResponse, UserResponse,
-    RefreshTokenRequest, RefreshTokenResponse, RevokeTokenRequest, RevokeTokenResponse
+    RegisterRequest, LoginRequest, GoogleCallbackQuery, 
+    ConnectWalletRequest, NonceRequest, NonceResponse, UserResponse,
+    RefreshTokenRequest, RevokeTokenRequest, RevokeTokenResponse
 };
 use crate::api::middleware::AuthenticatedUser;
 use crate::api::errors::{ApiResult, ApiError};
@@ -17,7 +18,7 @@ use crate::handlers::AppState;
 pub async fn register_handler(
     State(app_state): State<AppState>,
     Json(request): Json<RegisterRequest>,
-) -> ApiResult<Json<LoginResponse>> {
+) -> ApiResult<impl IntoResponse> {
     // Input validation
     if request.email.is_empty() || request.password.is_empty() ||
        request.first_name.is_empty() || request.last_name.is_empty() {
@@ -42,13 +43,17 @@ pub async fn register_handler(
         })?;
 
     info!("User registered: {}", request.email);
-    Ok(Json(response))
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": response,
+        "message": "User registered successfully"
+    })))
 }
 
 pub async fn login_handler(
     State(app_state): State<AppState>,
     Json(request): Json<LoginRequest>,
-) -> ApiResult<Json<LoginResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let response = app_state.auth_service.login(&request.email, &request.password)
         .await
         .map_err(|e| {
@@ -64,13 +69,17 @@ pub async fn login_handler(
         })?;
 
     info!("User logged in: {}", request.email);
-    Ok(Json(response))
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": response,
+        "message": "Login successful"
+    })))
 }
 
 pub async fn refresh_token_handler(
     State(app_state): State<AppState>,
     Json(request): Json<RefreshTokenRequest>,
-) -> ApiResult<Json<RefreshTokenResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let response = app_state.auth_service.refresh_token(&request.refresh_token)
         .await
         .map_err(|e| {
@@ -89,7 +98,11 @@ pub async fn refresh_token_handler(
         })?;
 
     info!("Token refreshed successfully");
-    Ok(Json(response))
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": response,
+        "message": "Token refreshed successfully"
+    })))
 }
 
 pub async fn revoke_token_handler(
@@ -139,21 +152,31 @@ pub async fn revoke_all_tokens_handler(
     }))
 }
 
-pub async fn google_auth_handler() -> Json<GoogleAuthResponse> {
+pub async fn google_auth_handler() -> ApiResult<impl IntoResponse> {
     let (auth_url, _csrf_token) = crate::application::services::AuthService::google_auth_url();
-    Json(GoogleAuthResponse { auth_url })
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": {
+            "auth_url": auth_url
+        },
+        "message": "Google auth URL generated successfully"
+    })))
 }
 
 pub async fn google_callback_handler(
     State(app_state): State<AppState>,
     Query(query): Query<GoogleCallbackQuery>,
-) -> ApiResult<Json<LoginResponse>> {
+) -> ApiResult<impl IntoResponse> {
     let response = app_state.auth_service.google_callback(&query.code, &query.state)
         .await
         .map_err(|e| ApiError::InternalServerError(format!("Google callback failed: {}", e)))?;
 
     info!("Google OAuth callback successful");
-    Ok(Json(response))
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": response,
+        "message": "Google OAuth callback successful"
+    })))
 }
 
 pub async fn connect_wallet_handler(

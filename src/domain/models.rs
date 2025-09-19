@@ -44,6 +44,8 @@ pub struct Collection {
     pub max_supply: u16,
     pub creator: Arc<str>,
     pub current_supply: u16,
+    pub total_volume_wei: Option<String>,
+    pub floor_price_wei: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

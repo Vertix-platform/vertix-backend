@@ -17,25 +17,25 @@ name = "test_multi_chain_listener"
 path = "src/bin/test_multi_chain_listener.rs"
 
 [dependencies]
-axum = "0.8.4"          # Web framework
-tokio = { version = "1.35.1", features = ["full"] } # Async runtime
+axum = "0.8.4"
+tokio = { version = "1.35.1", features = ["full"] }
 tower ={ version = "0.4.13", features = ["full"] }
-serde = { version = "1.0.195", features = ["derive"] } # JSON serialization
+serde = { version = "1.0.195", features = ["derive"] }
 reqwest = { version = "0.11", features = ["json", "multipart"] }
-dotenvy = "0.15.7"       # Environment variables
-tracing = "0.1.41"       # Logging
-tracing-subscriber = "0.3.19" # Logging subscriber
-tower-http = {version = "0.6.6", features = ["full"] } # HTTP middleware
+dotenvy = "0.15.7"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+tower-http = {version = "0.6.6", features = ["full"] }
 sqlx = { version = "0.7.4", features = ["runtime-tokio", "postgres", "uuid", "runtime-tokio-native-tls", "chrono"] }
-bcrypt = "0.15.1" # Password hashing
-jsonwebtoken = "9.3.1" # JWT generation
-oauth2 = "4.4.2" # OAuth 2.0 for Google
-serde_json = "1.0.143" # JSON handling
+bcrypt = "0.15.1"
+jsonwebtoken = "9.3.1"
+oauth2 = "4.4.2"
+serde_json = "1.0.143"
 uuid = { version = "1.18.0", features = ["v4", "serde"] }
-chrono = { version = "0.4.41", features = ["serde"] } # Timestamps
+chrono = { version = "0.4.41", features = ["serde"] }
 dotenv = "0.15.0"
 ethers-core = "2.0.14"
-ethers = {version = "2.0.14", features = ["legacy", "abigen"] }
+ethers = {version = "2.0.14", features = ["legacy", "abigen", "ws"] }
 hex = "0.4.3"
 sha3 = "0.10.8"
 redis = "0.21"
@@ -44,10 +44,12 @@ trust-dns-resolver = "0.23.2"
 argon2 = "0.5.3"
 thiserror = "2.0.16"
 async-trait = "0.1.89"
-urlencoding = "2.1" # For URL encoding in OAuth flows
-backtrace = "0.3" # For debugging panics
+urlencoding = "2.1"
+backtrace = "0.3"
 alloy = { version = "1.0.25", features = ["full"] }
-regex = "1.11.2" # Regular expressions for validation
-rand = "0.8.5" # Random number generation
-sha2 = "0.10.9" # SHA-256 hashing
-lazy_static = "1.5.0" # For static initialization
+regex = "1.11.2"
+rand = "0.8.5"
+sha2 = "0.10.9"
+lazy_static = "1.5.0"
+futures-util = "0.3.30"
+futures = "0.3.30"

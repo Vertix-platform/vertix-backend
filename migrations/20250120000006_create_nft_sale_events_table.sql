@@ -1,0 +1,31 @@
+-- Create NFT sale events table for blockchain events
+CREATE TABLE nft_sale_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chain_id BIGINT NOT NULL,
+    listing_id BIGINT NOT NULL,
+    buyer_address VARCHAR(42) NOT NULL,
+    seller_address VARCHAR(42) NOT NULL,
+    nft_contract VARCHAR(42) NOT NULL,
+    token_id BIGINT NOT NULL,
+    price_wei NUMERIC(78, 0) NOT NULL,
+    royalty_amount_wei NUMERIC(78, 0) NOT NULL DEFAULT 0,
+    royalty_recipient VARCHAR(42),
+    platform_fee_wei NUMERIC(78, 0) NOT NULL DEFAULT 0,
+    platform_fee_recipient VARCHAR(42),
+    transaction_hash VARCHAR(66) NOT NULL,
+    block_number BIGINT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create indexes
+CREATE INDEX idx_nft_sale_events_chain_id ON nft_sale_events(chain_id);
+CREATE INDEX idx_nft_sale_events_listing_id ON nft_sale_events(listing_id);
+CREATE INDEX idx_nft_sale_events_buyer ON nft_sale_events(buyer_address);
+CREATE INDEX idx_nft_sale_events_seller ON nft_sale_events(seller_address);
+CREATE INDEX idx_nft_sale_events_nft_contract ON nft_sale_events(nft_contract);
+CREATE INDEX idx_nft_sale_events_token_id ON nft_sale_events(token_id);
+CREATE INDEX idx_nft_sale_events_block_number ON nft_sale_events(block_number);
+
+-- Create unique constraint to prevent duplicate events
+CREATE UNIQUE INDEX idx_nft_sale_events_unique 
+ON nft_sale_events(transaction_hash, listing_id, chain_id);
